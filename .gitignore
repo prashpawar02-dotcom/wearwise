@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.env
+.env.local
+.env*.local
+.DS_Store
+*.pem
+npm-debug.log*
+.vercel
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Leftover from a failed git init over a mounted filesystem
+.git-broken-*/

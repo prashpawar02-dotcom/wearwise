@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+
+  /* Warm ivory canvas, charcoal ink */
+  --background: 40 38% 96%;        /* warm ivory #FBF7F0 */
+  --foreground: 220 13% 18%;       /* charcoal */
+
+  --card: 40 50% 99%;
+  --card-foreground: 220 13% 18%;
+
+  --muted: 36 24% 90%;
+  --muted-foreground: 220 9% 42%;
+
+  --border: 36 20% 86%;
+  --input: 36 20% 86%;
+  --ring: 338 30% 55%;             /* rose ring */
+
+  /* Primary = muted plum (premium, trustworthy) */
+  --primary: 322 24% 32%;
+  --primary-foreground: 40 38% 97%;
+
+  --secondary: 36 30% 92%;
+  --secondary-foreground: 220 13% 22%;
+
+  --accent: 338 38% 88%;
+  --accent-foreground: 322 24% 30%;
+
+  --destructive: 4 64% 48%;
+  --destructive-foreground: 40 38% 97%;
+
+  /* Brand accents */
+  --brand-rose: 338 42% 66%;       /* muted rose */
+  --brand-plum: 322 28% 34%;       /* plum */
+  --brand-sage: 140 16% 60%;       /* sage */
+  --brand-gold: 41 48% 66%;        /* champagne gold */
+
+  --radius: 0.85rem;
+}
+
+* { border-color: hsl(var(--border)); }
+
+html { -webkit-tap-highlight-color: transparent; }
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle scrollbar for a premium feel */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 999px; }
