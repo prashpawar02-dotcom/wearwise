@@ -92,3 +92,18 @@ export interface OutfitSuggestion {
   source: string; // 'manual' | 'ai'
   created_at: string;
 }
+
+// User feedback on an approved suggestion (v0.6).
+export type WouldWear = "yes" | "maybe" | "no";
+
+export interface OutfitSuggestionFeedback {
+  id: string;
+  suggestion_id: string;
+  request_id: string | null;
+  user_id: string;
+  useful: boolean | null;
+  would_wear: WouldWear | string | null;
+  reason: string | null;
+  note: string | null;
+  created_at: string;
+}

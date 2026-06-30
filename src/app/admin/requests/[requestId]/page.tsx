@@ -3,7 +3,12 @@ import { requireAdmin } from "@/lib/auth";
 import { signWardrobePaths } from "@/lib/images";
 import { AppHeader } from "@/components/nav/app-header";
 import { Badge } from "@/components/ui/badge";
-import { OCCASIONS, type OutfitSuggestion, type WardrobeItem } from "@/lib/types";
+import {
+  OCCASIONS,
+  type OutfitSuggestion,
+  type OutfitSuggestionFeedback,
+  type WardrobeItem,
+} from "@/lib/types";
 import { SuggestionBuilder } from "./suggestion-builder";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +48,24 @@ export default async function AdminRequestDetail({ params }: { params: { request
     .order("position", { ascending: true });
   const suggestions = (suggData ?? []) as OutfitSuggestion[];
 
+  // Admin-only: user feedback for this request's suggestions (latest first).
+  // RLS policy `ssfeedback_admin_read` authorizes admins to read all feedback.
+  const { data: feedbackData } = await supabase
+    .from("outfit_suggestion_feedback")
+    .select("*")
+    .eq("request_id", params.requestId)
+    .order("created_at", { ascending: false });
+  const feedback = (feedbackData ?? []) as OutfitSuggestionFeedback[];
+
+  const summary = {
+    total: feedback.length,
+    wearYes: feedback.filter((f) => f.would_wear === "yes").length,
+    wearMaybe: feedback.filter((f) => f.would_wear === "maybe").length,
+    wearNo: feedback.filter((f) => f.would_wear === "no").length,
+    usefulYes: feedback.filter((f) => f.useful === true).length,
+    usefulNo: feedback.filter((f) => f.useful === false).length,
+  };
+
   const urls = await signWardrobePaths(items.map((i) => i.image_path));
 
   return (
@@ -61,6 +84,21 @@ export default async function AdminRequestDetail({ params }: { params: { request
           <p className="mt-1 text-sm text-muted-foreground">Note: {request.notes}</p>
         )}
 
+        {/* Request-level feedback summary (admin-only) */}
+        {summary.total > 0 && (
+          <div className="mt-4 rounded-xl border border-border bg-card p-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              User feedback · {summary.total} {summary.total === 1 ? "entry" : "entries"}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+              <Badge tone="sage">Would wear · Yes {summary.wearYes}</Badge>
+              <Badge tone="gold">Maybe {summary.wearMaybe}</Badge>
+              <Badge tone="rose">No {summary.wearNo}</Badge>
+              <Badge tone="muted">Useful Yes {summary.usefulYes} · No {summary.usefulNo}</Badge>
+            </div>
+          </div>
+        )}
+
         <div className="mt-6">
           <SuggestionBuilder
             requestId={request.id}
@@ -68,6 +106,7 @@ export default async function AdminRequestDetail({ params }: { params: { request
             items={items}
             urls={urls}
             existing={suggestions}
+            feedback={feedback}
           />
         </div>
       </div>

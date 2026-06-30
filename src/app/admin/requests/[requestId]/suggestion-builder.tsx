@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { OutfitSuggestion, WardrobeItem } from "@/lib/types";
+import type { OutfitSuggestion, OutfitSuggestionFeedback, WardrobeItem } from "@/lib/types";
 import { Check, Trash2, Sparkles, Loader2, AlertCircle, Plus, Copy, X } from "lucide-react";
 import { validateOutfitItems, roleForItem } from "@/lib/outfitValidation";
 
@@ -20,18 +20,28 @@ export function SuggestionBuilder({
   items,
   urls,
   existing,
+  feedback = [],
 }: {
   requestId: string;
   userId: string;
   items: WardrobeItem[];
   urls: Record<string, string>;
   existing: OutfitSuggestion[];
+  feedback?: OutfitSuggestionFeedback[];
 }) {
   const router = useRouter();
   const supabase = createClient();
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const [adding, setAdding] = useState(false);
+
+  // Group feedback by suggestion (rows arrive newest-first from the server).
+  const feedbackBySuggestion = new Map<string, OutfitSuggestionFeedback[]>();
+  for (const f of feedback) {
+    const arr = feedbackBySuggestion.get(f.suggestion_id);
+    if (arr) arr.push(f);
+    else feedbackBySuggestion.set(f.suggestion_id, [f]);
+  }
 
   async function generate() {
     if (existing.length > 0 && !confirm("Replace the current draft suggestions with fresh AI drafts? Approved looks are kept.")) return;
@@ -109,7 +119,15 @@ export function SuggestionBuilder({
         ) : (
           <div className="mt-3 space-y-4">
             {existing.map((s, idx) => (
-              <DraftCard key={s.id} suggestion={s} index={idx} items={items} urls={urls} requestId={requestId} />
+              <DraftCard
+                key={s.id}
+                suggestion={s}
+                index={idx}
+                items={items}
+                urls={urls}
+                requestId={requestId}
+                feedback={feedbackBySuggestion.get(s.id) ?? []}
+              />
             ))}
           </div>
         )}
@@ -145,10 +163,10 @@ function CopyButton({ value, label = "Copy" }: { value: string; label?: string }
 }
 
 function DraftCard({
-  suggestion: s, index, items, urls, requestId,
+  suggestion: s, index, items, urls, requestId, feedback,
 }: {
   suggestion: OutfitSuggestion; index: number; items: WardrobeItem[];
-  urls: Record<string, string>; requestId: string;
+  urls: Record<string, string>; requestId: string; feedback: OutfitSuggestionFeedback[];
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -470,6 +488,9 @@ function DraftCard({
           )}
         </div>
 
+        {/* User feedback (admin-only) */}
+        <FeedbackSection rows={feedback} />
+
         {/* Actions */}
         <div className="flex flex-wrap gap-2 pt-1">
           <Button size="sm" variant="outline" onClick={save} disabled={busy}>
@@ -501,5 +522,61 @@ function DetailRow({ label, value }: { label: string; value: string }) {
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="truncate text-right">{value}</dd>
     </div>
+  );
+}
+
+/** Admin-only list of user feedback for one suggestion (latest first). */
+function FeedbackSection({ rows }: { rows: OutfitSuggestionFeedback[] }) {
+  const [showAll, setShowAll] = useState(false);
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-muted/20 p-2.5 text-xs text-muted-foreground">
+        No user feedback yet.
+      </div>
+    );
+  }
+
+  const visible = showAll ? rows : rows.slice(0, 1);
+  const extra = rows.length - 1;
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 p-2.5 text-xs">
+      <p className="mb-2 font-medium text-muted-foreground">User feedback ({rows.length})</p>
+      <ul className="space-y-2">
+        {visible.map((f) => <FeedbackRow key={f.id} f={f} />)}
+      </ul>
+      {extra > 0 && (
+        <button type="button" onClick={() => setShowAll((v) => !v)} className="mt-2 text-plum hover:underline">
+          {showAll ? "Show less" : `+${extra} more feedback ${extra === 1 ? "entry" : "entries"}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function FeedbackRow({ f }: { f: OutfitSuggestionFeedback }) {
+  const usefulLabel = f.useful === true ? "Yes" : f.useful === false ? "No" : "Not answered";
+  const wearLabel =
+    f.would_wear === "yes" ? "Yes" : f.would_wear === "maybe" ? "Maybe" : f.would_wear === "no" ? "No" : "Not answered";
+  const wearTone: "sage" | "gold" | "rose" | "muted" =
+    f.would_wear === "yes" ? "sage" : f.would_wear === "maybe" ? "gold" : f.would_wear === "no" ? "rose" : "muted";
+
+  return (
+    <li className="rounded-md border border-border bg-card p-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge tone={wearTone}>Would wear: {wearLabel}</Badge>
+        <Badge tone="muted">Useful: {usefulLabel}</Badge>
+        <span className="ml-auto text-[10px] text-muted-foreground">
+          {new Date(f.created_at).toLocaleString()}
+        </span>
+      </div>
+      {f.reason && (
+        <p className="mt-1.5"><span className="text-muted-foreground">Reason:</span> {f.reason}</p>
+      )}
+      {f.note && (
+        <p className="mt-1"><span className="text-muted-foreground">Note:</span> {f.note}</p>
+      )}
+    </li>
   );
 }
