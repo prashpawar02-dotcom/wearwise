@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { OCCASIONS, type OutfitSuggestion, type WardrobeItem } from "@/lib/types";
 import { WornTodayButton } from "./worn-today-button";
+import { SuggestionFeedback } from "./suggestion-feedback";
 import { Clock } from "lucide-react";
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
@@ -108,14 +109,15 @@ export default async function OutfitsPage({ params }: { params: { requestId: str
                     })}
                   </div>
 
-                  <div className="mt-4 flex gap-2">
+                  <div className="mt-4 flex">
                     <WornTodayButton suggestionId={s.id} itemIds={s.item_ids} />
-                    <Link
-                      href={`/feedback/${s.id}`}
-                      className="flex h-11 flex-1 items-center justify-center rounded-lg border border-border text-sm font-medium hover:bg-muted"
-                    >
-                      Give feedback
-                    </Link>
+                  </div>
+
+                  {/* Single feedback path for beta: the inline "Rate this look" form
+                      (writes to outfit_suggestion_feedback). The older /feedback/[id]
+                      page is intentionally left in place but no longer linked here. */}
+                  <div className="mt-3">
+                    <SuggestionFeedback suggestionId={s.id} requestId={request.id} />
                   </div>
                 </CardContent>
               </Card>
