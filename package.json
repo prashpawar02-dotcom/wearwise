@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "preflight": "tsx --env-file=.env.local scripts/check-local-env.ts",
+    "audit:invalid-drafts": "tsx --env-file=.env.local scripts/audit-invalid-outfit-drafts.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
@@ -29,6 +31,7 @@
     "tailwindcss": "^3.4.13",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.6.2",
+    "tsx": "^4.19.2",
     "eslint": "^8.57.1",
     "eslint-config-next": "14.2.35"
   }

@@ -3,41 +3,48 @@
 @tailwind utilities;
 
 :root {
+  /* Font families are provided by next/font via layout.tsx.
+     Fallbacks here keep things sane if a variable is ever missing. */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-serif: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+  /* Mono labels use a system fallback stack (no font download).
+     TODO: Swap to Geist Mono via Vercel geist package when registry access is available. */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
-  /* Warm ivory canvas, charcoal ink */
-  --background: 40 38% 96%;        /* warm ivory #FBF7F0 */
-  --foreground: 220 13% 18%;       /* charcoal */
+  /* ---- Semantic tokens (aligned to WearWise palette) ---- */
+  --background: 38 35% 94%;        /* ivory  #F5F1EA */
+  --foreground: 36 10% 10%;        /* charcoal #1C1A17 */
 
-  --card: 40 50% 99%;
-  --card-foreground: 220 13% 18%;
+  --card: 40 47% 97%;              /* bone   #FBF8F3 */
+  --card-foreground: 36 10% 10%;
 
-  --muted: 36 24% 90%;
-  --muted-foreground: 220 9% 42%;
+  --muted: 35 25% 88%;             /* stone-ish */
+  --muted-foreground: 33 6% 40%;   /* graphite #6B655C */
 
-  --border: 36 20% 86%;
-  --input: 36 20% 86%;
-  --ring: 338 30% 55%;             /* rose ring */
+  --border: 35 18% 84%;
+  --input: 35 18% 84%;
+  --ring: 326 25% 35%;             /* plum ring */
 
-  /* Primary = muted plum (premium, trustworthy) */
-  --primary: 322 24% 32%;
-  --primary-foreground: 40 38% 97%;
+  /* Primary = plum */
+  --primary: 326 25% 23%;          /* plum   #4A2C3D */
+  --primary-foreground: 40 47% 97%;
 
-  --secondary: 36 30% 92%;
-  --secondary-foreground: 220 13% 22%;
+  --secondary: 36 28% 90%;
+  --secondary-foreground: 36 12% 16%;
 
-  --accent: 338 38% 88%;
-  --accent-foreground: 322 24% 30%;
+  --accent: 263 24% 78%;           /* lavender-ish */
+  --accent-foreground: 326 25% 23%;
 
   --destructive: 4 64% 48%;
   --destructive-foreground: 40 38% 97%;
 
-  /* Brand accents */
-  --brand-rose: 338 42% 66%;       /* muted rose */
-  --brand-plum: 322 28% 34%;       /* plum */
-  --brand-sage: 140 16% 60%;       /* sage */
-  --brand-gold: 41 48% 66%;        /* champagne gold */
+  /* Back-compat brand accents (older screens) */
+  --brand-rose: 338 42% 66%;
+  --brand-gold: 33 41% 54%;        /* champagne #B8915A */
+
+  /* Hairlines */
+  --hairline: rgba(28, 26, 23, 0.08);
+  --hairline-strong: rgba(28, 26, 23, 0.16);
 
   --radius: 0.85rem;
 }
@@ -50,9 +57,37 @@ body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Subtle scrollbar for a premium feel */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 999px; }
+
+@layer components {
+  /* Editorial eyebrow label (mono, tracked, uppercase) */
+  .ww-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+  /* Display headings use the serif with italics for emphasis */
+  .ww-display {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1.02;
+  }
+  .ww-display em { font-style: italic; color: #4A2C3D; }
+}
+
+@layer utilities {
+  /* Horizontal chip strip that hides its scrollbar */
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}

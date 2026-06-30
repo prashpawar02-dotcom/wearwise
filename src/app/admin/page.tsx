@@ -2,7 +2,9 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { AppHeader } from "@/components/nav/app-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { Users, ListChecks } from "lucide-react";
+import { Users, ListChecks, LineChart } from "lucide-react";
+
+export const dynamic = "force-dynamic";
 
 export default async function AdminHome() {
   const { supabase } = await requireAdmin();
@@ -32,7 +34,7 @@ export default async function AdminHome() {
                     <p className="text-sm text-muted-foreground">{pendingCount ?? 0} awaiting curation</p>
                   </div>
                 </div>
-                <span className="text-muted-foreground">→</span>
+                <span className="text-muted-foreground">&rarr;</span>
               </CardContent>
             </Card>
           </Link>
@@ -47,7 +49,22 @@ export default async function AdminHome() {
                     <p className="text-sm text-muted-foreground">{userCount ?? 0} total</p>
                   </div>
                 </div>
-                <span className="text-muted-foreground">→</span>
+                <span className="text-muted-foreground">&rarr;</span>
+              </CardContent>
+            </Card>
+          </Link>
+
+          <Link href="/admin/ai-usage">
+            <Card>
+              <CardContent className="flex items-center justify-between py-5">
+                <div className="flex items-center gap-3">
+                  <LineChart className="h-5 w-5 text-rose-500" />
+                  <div>
+                    <p className="font-medium">AI usage &amp; cost</p>
+                    <p className="text-sm text-muted-foreground">Real token cost per call</p>
+                  </div>
+                </div>
+                <span className="text-muted-foreground">&rarr;</span>
               </CardContent>
             </Card>
           </Link>

@@ -13,7 +13,7 @@ create extension if not exists "pgcrypto";
 -- Enums ---------------------------------------------------------------
 do $$ begin
   create type occasion_type as enum
-    ('work','casual','college','ethnic','festive','party','travel','family_function');
+    ('work','casual','college','ethnic','festive','party','travel','family_function','dinner_date');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -22,6 +22,10 @@ exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type suggestion_status as enum ('draft','approved','rejected');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type ai_tag_status as enum ('analyzing','tagged','needs_review','failed');
 exception when duplicate_object then null; end $$;
 
 -- ---------------------------------------------------------------------
@@ -47,11 +51,21 @@ create table if not exists public.wardrobe_items (
   user_id uuid not null references auth.users(id) on delete cascade,
   image_path text not null,          -- path inside the 'wardrobe' storage bucket
   category text,                     -- top, bottom, dress, kurta, saree, dupatta, footwear, outerwear, accessory
-  color text,
+  color text,                        -- primary colour
   pattern text,                      -- solid, printed, embroidered, striped, floral
   occasion_tags occasion_type[] default '{}',
   notes text,
   last_worn_at date,
+  -- Auto-tagging (v0.2)
+  ai_tag_status ai_tag_status not null default 'tagged',
+  ai_confidence real,                -- 0..1 from the vision model
+  user_facing_name text,             -- short friendly name, e.g. "Rose floral top"
+  sub_category text,                  -- free-text refinement, e.g. "kurti", "anarkali"
+  style text,                        -- short style description
+  secondary_colors text[] default '{}',
+  ethnic_western_fusion text,        -- Ethnic | Western | Fusion
+  auto_tagged_at timestamptz,
+  user_corrected_tags boolean not null default false,
   created_at timestamptz not null default now()
 );
 create index if not exists wardrobe_items_user_idx on public.wardrobe_items(user_id);
@@ -82,6 +96,11 @@ create table if not exists public.outfit_suggestions (
   item_ids uuid[] not null default '{}', -- references wardrobe_items.id
   status suggestion_status not null default 'draft',
   position smallint default 1,           -- 1..3 ordering
+  -- AI outfit drafts (v0.4). description holds the styling reason.
+  avoid_note text,
+  missing_item_suggestion text,
+  ai_confidence real,
+  source text not null default 'manual', -- 'manual' | 'ai'
   approved_by uuid references auth.users(id),
   approved_at timestamptz,
   created_at timestamptz not null default now()

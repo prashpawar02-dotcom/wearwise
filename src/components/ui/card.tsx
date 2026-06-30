@@ -1,9 +1,22 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("rounded-xl border border-border bg-card text-card-foreground shadow-sm", className)} {...props} />
+export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** "stack" uses the deeper signature shadow used for the Best Pick card. */
+  variant?: "default" | "stack";
+}
+
+const Card = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ className, variant = "default", ...props }, ref) => (
+    <div
+      ref={ref}
+      className={cn(
+        "rounded-ww-lg border border-hairline bg-bone text-card-foreground",
+        variant === "stack" ? "shadow-ww-stack" : "shadow-ww-sm",
+        className
+      )}
+      {...props}
+    />
   )
 );
 Card.displayName = "Card";

@@ -1,0 +1,443 @@
+import Link from "next/link";
+import { requireProfile } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { signWardrobePaths } from "@/lib/images";
+import { BottomNav } from "@/components/nav/bottom-nav";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Chip } from "@/components/ui/Chip";
+import { Icon } from "@/components/ui/Icon";
+import { ConfidenceRing } from "@/components/ui/ConfidenceRing";
+import { CompactOutfitStack } from "@/components/wearwise/CompactOutfitStack";
+import { ReasoningCards, type ReasoningItem } from "@/components/wearwise/ReasoningCards";
+import type { OutfitItem } from "@/components/wearwise/OutfitItemRow";
+import type { GarmentKind } from "@/components/ui/Icon";
+import { OCCASIONS, type OutfitSuggestion, type WardrobeItem } from "@/lib/types";
+import { WornTodayButton } from "@/app/(app)/outfits/[requestId]/worn-today-button";
+
+export const dynamic = "force-dynamic"; // per-user signed URLs; never cache
+
+const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
+
+// Safe demo "Best Pick" shown until the user has an approved outfit.
+// Tuned to the launch niche (smart-casual, women 22–40).
+const DEMO_OUTFIT: OutfitItem[] = [
+  { kind: "Shirt", color: "#F2ECE0", label: "Ivory silk blouse", sub: "Light · breathable" },
+  { kind: "Pants", color: "#B98D63", label: "Camel tailored trousers", sub: "All-day comfort" },
+  { kind: "Loafer", color: "#C9A98C", label: "Nude flats", sub: "Polished · easy" },
+  { kind: "Watch", color: "#3D352B", label: "Gold studs", sub: "Optional" },
+];
+
+type RequestRel = { occasion: string; notes: string | null; created_at: string };
+type ApprovedSuggestion = OutfitSuggestion & { request: RequestRel | RequestRel[] | null };
+
+export default async function DashboardPage() {
+  const { user, supabase, profile } = await requireProfile();
+  if (!profile?.onboarded) redirect("/onboarding");
+
+  const [{ count: itemCount }, { data: requests }, { data: worn }, { data: approvedData }] =
+    await Promise.all([
+      supabase.from("wardrobe_items").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+      supabase.from("outfit_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3),
+      supabase.from("worn_history").select("*").eq("user_id", user.id).order("worn_on", { ascending: false }).limit(1),
+      // RLS already restricts to the owner's APPROVED suggestions; we re-state
+      // both filters as defense-in-depth. Pull the parent request for context.
+      supabase
+        .from("outfit_suggestions")
+        .select("*, request:outfit_requests(occasion, notes, created_at)")
+        .eq("user_id", user.id)
+        .eq("status", "approved")
+        .order("created_at", { ascending: false })
+        .limit(12),
+    ]);
+
+  const items = itemCount ?? 0;
+  const firstName = profile?.full_name?.split(" ")[0];
+  const initial = (firstName ?? "W").charAt(0).toUpperCase();
+
+  // ---- Build the real Best Pick (if any approved suggestion exists) ----
+  const approved = (approvedData ?? []) as ApprovedSuggestion[];
+  const bestPick = await buildBestPick(approved, user.id, supabase);
+
+  return (
+    <main className="min-h-dvh pb-28">
+      <div className="animate-fade-in px-6 pt-10">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="ww-eyebrow mb-1">{dateLabel()}</p>
+            <h1 className="ww-display text-[1.7rem] text-charcoal">
+              {greeting()},{" "}
+              <em className="text-plum">{firstName ? `${firstName}.` : "there."}</em>
+            </h1>
+          </div>
+          <span
+            aria-hidden="true"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-stone font-serif text-base text-charcoal"
+          >
+            {initial}
+          </span>
+        </div>
+        <p className="mt-2 text-sm text-graphite">
+          {bestPick
+            ? "Here's your best outfit for today."
+            : items >= 10
+              ? "Create a look and your daily picks will appear here."
+              : "Let's set up your wardrobe so your daily picks can begin."}
+        </p>
+
+        {/* Context chips */}
+        <div className="no-scrollbar -mx-6 mt-4 flex gap-2 overflow-x-auto px-6">
+          {bestPick ? (
+            <>
+              <Chip tone="filled">{bestPick.occasion}</Chip>
+              {bestPick.context && <Chip>{bestPick.context}</Chip>}
+              {bestPick.confidence != null && (
+                <Chip tone="plum" mono size="sm">{bestPick.confidence}% match</Chip>
+              )}
+              <Link href="/occasion/new" className="shrink-0">
+                <Chip className="text-graphite">+ new</Chip>
+              </Link>
+            </>
+          ) : (
+            <>
+              <Chip><Icon.Sun className="h-3.5 w-3.5 text-champagne" /> 28°</Chip>
+              <Chip><Icon.Briefcase className="h-3.5 w-3.5" /> Office</Chip>
+              <Chip tone="filled">Smart casual</Chip>
+              <Link href="/occasion/new" className="shrink-0">
+                <Chip className="text-graphite">+ change</Chip>
+              </Link>
+            </>
+          )}
+        </div>
+
+        {/* Build-wardrobe nudge (until they have enough items, no real pick) */}
+        {!bestPick && items < 10 && (
+          <Card className="mt-5 border-plum/20 bg-plum/[0.05] p-5">
+            <p className="font-medium text-charcoal">Build your wardrobe first</p>
+            <p className="mt-1 text-sm text-graphite">
+              Add at least 10 items so WearWise can suggest great outfits. You have {items} so far.
+            </p>
+            <Button asChild className="mt-4" size="full">
+              <Link href="/wardrobe/upload"><Icon.Plus className="h-4 w-4" /> Add clothes to get your first real outfit</Link>
+            </Button>
+          </Card>
+        )}
+
+        {/* Best Pick card */}
+        <section className="mt-5">
+          {bestPick ? <RealBestPick pick={bestPick} /> : <SampleBestPick items={items} />}
+        </section>
+
+        {/* Quick stats */}
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Link href="/wardrobe">
+            <Card className="h-full p-5">
+              <Icon.Hanger className="h-5 w-5 text-plum" />
+              <span className="mt-1 block text-2xl font-semibold text-charcoal">{items}</span>
+              <span className="text-sm text-graphite">items in wardrobe</span>
+            </Card>
+          </Link>
+          <Link href="/occasion/new">
+            <Card className="h-full p-5">
+              <Icon.Sparkle className="h-5 w-5 text-champagne" />
+              <span className="mt-1 block text-2xl font-semibold text-charcoal">{requests?.length ?? 0}</span>
+              <span className="text-sm text-graphite">recent requests</span>
+            </Card>
+          </Link>
+        </div>
+
+        {/* Recent requests */}
+        {requests && requests.length > 0 && (
+          <section className="mt-8">
+            <h2 className="font-serif text-lg font-semibold text-charcoal">Recent requests</h2>
+            <div className="mt-3 space-y-2">
+              {requests.map((r) => (
+                <Link key={r.id} href={`/outfits/${r.id}`}>
+                  <Card className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="font-medium text-charcoal">{occasionLabel(r.occasion)}</p>
+                      <p className="text-xs text-graphite">{new Date(r.created_at).toLocaleDateString()}</p>
+                    </div>
+                    <Chip tone={r.status === "fulfilled" ? "sage" : "champagne"} size="sm">
+                      {r.status === "fulfilled" ? "Ideas ready" : "Curating"}
+                    </Chip>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {worn && worn.length > 0 && (
+          <p className="mt-6 text-sm text-graphite">
+            Last worn outfit logged on {new Date(worn[0].worn_on).toLocaleDateString()}.
+          </p>
+        )}
+      </div>
+      <BottomNav />
+    </main>
+  );
+}
+
+// ===================== Best Pick rendering =====================
+
+interface BestPick {
+  suggestionId: string;
+  requestId: string;
+  title: string;
+  occasion: string;
+  context: string | null;
+  confidence: number | null;
+  itemIds: string[];
+  rows: OutfitItem[];
+  thumbs: string[];
+  reasoning: ReasoningItem[];
+  hasAlternatives: boolean;
+}
+
+function RealBestPick({ pick }: { pick: BestPick }) {
+  return (
+    <>
+      <Card variant="stack" className="overflow-hidden p-5">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="ww-eyebrow text-plum">Best Pick Today</p>
+            <h2 className="mt-1 font-serif text-[1.35rem] leading-tight tracking-tight text-charcoal">
+              {pick.title}
+            </h2>
+          </div>
+          {pick.confidence != null && <ConfidenceRing value={pick.confidence} size={52} />}
+        </div>
+
+        {/* Outfit photos (private signed thumbnails) or graceful gradient */}
+        <div className="relative mb-4 h-44 overflow-hidden rounded-ww-md border border-hairline bg-gradient-to-b from-bone to-stone">
+          {pick.confidence != null && (
+            <span className="absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-full bg-charcoal/70 px-2.5 py-1 text-[10px] font-medium tracking-wide text-bone backdrop-blur">
+              <Icon.Sparkle className="h-2.5 w-2.5" /> AI · STYLE MATCH {pick.confidence}
+            </span>
+          )}
+          {pick.thumbs.length > 0 ? (
+            <div className="flex h-full gap-1">
+              {pick.thumbs.slice(0, 4).map((src, i) => (
+                <div key={i} className="h-full flex-1 overflow-hidden bg-stone">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="" className="h-full w-full object-cover" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid h-full place-items-center text-mist">
+              <Icon.Hanger className="h-7 w-7" />
+            </div>
+          )}
+        </div>
+
+        <CompactOutfitStack items={pick.rows} showCheck={false} />
+
+        {/* Reasoning */}
+        {pick.reasoning.length > 0 && <ReasoningCards items={pick.reasoning} className="mt-4" />}
+
+        {/* Actions */}
+        <div className="mt-5 flex gap-2">
+          <WornTodayButton suggestionId={pick.suggestionId} itemIds={pick.itemIds} />
+          {pick.hasAlternatives && (
+            <Button asChild variant="secondary" className="flex-1">
+              <Link href={`/outfits/${pick.requestId}`}>
+                <Icon.Shuffle className="h-3.5 w-3.5" /> Another
+              </Link>
+            </Button>
+          )}
+        </div>
+        <Link
+          href={`/outfits/${pick.requestId}`}
+          className="mt-2.5 flex w-full items-center justify-center gap-1.5 py-1.5 text-[13px] text-graphite hover:text-charcoal"
+        >
+          <Icon.ArrowRight className="h-3.5 w-3.5" /> View full look &amp; alternatives
+        </Link>
+      </Card>
+      <Link href="/occasion/new" className="mt-2 flex items-center justify-center gap-1.5 py-1 text-xs text-graphite hover:text-charcoal">
+        <Icon.Calendar className="h-3.5 w-3.5" /> Change occasion
+      </Link>
+    </>
+  );
+}
+
+function SampleBestPick({ items }: { items: number }) {
+  const ready = items >= 10;
+  return (
+    <>
+      <Card variant="stack" className="overflow-hidden p-5">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="ww-eyebrow text-plum">Sample preview</p>
+            <h2 className="mt-1 font-serif text-[1.35rem] leading-tight tracking-tight text-charcoal">
+              Polished without trying <em className="text-plum">too hard.</em>
+            </h2>
+          </div>
+          <ConfidenceRing value={87} size={52} />
+        </div>
+
+        <div className="relative mb-4 flex h-44 items-center justify-center overflow-hidden rounded-ww-md border border-hairline bg-gradient-to-b from-bone to-stone">
+          <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-charcoal/70 px-2.5 py-1 text-[10px] font-medium tracking-wide text-bone backdrop-blur">
+            <Icon.Sparkle className="h-2.5 w-2.5" /> SAMPLE · STYLE MATCH 87
+          </span>
+          <div className="flex items-end gap-3 opacity-90">
+            {DEMO_OUTFIT.slice(0, 3).map((it, i) => (
+              <div
+                key={i}
+                className="grid h-20 w-16 place-items-center rounded-ww-sm border border-hairline"
+                style={{ background: it.color }}
+              >
+                <span className="sr-only">{it.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <CompactOutfitStack items={DEMO_OUTFIT} showCheck={false} />
+
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          <Chip tone="sage" size="sm"><Icon.Check className="h-2.5 w-2.5" /> Weather-ready</Chip>
+          <Chip tone="sage" size="sm"><Icon.Check className="h-2.5 w-2.5" /> Office-ready</Chip>
+          <Chip tone="sage" size="sm"><Icon.Check className="h-2.5 w-2.5" /> Comfortable</Chip>
+        </div>
+
+        <div className="mt-5">
+          <Button asChild size="full">
+            <Link href={ready ? "/occasion/new" : "/wardrobe/upload"}>
+              {ready ? (
+                <>Get today&apos;s outfit <Icon.ArrowRight className="h-4 w-4" /></>
+              ) : (
+                <>Add clothes to get your first real outfit</>
+              )}
+            </Link>
+          </Button>
+        </div>
+      </Card>
+      <p className="mt-2 px-1 text-xs text-mist">
+        {ready
+          ? "This is a sample. Create a look to see your real Best Pick here."
+          : `This is a sample of your daily pick. Add ${Math.max(0, 10 - items)} more item${10 - items === 1 ? "" : "s"} to get real recommendations.`}
+      </p>
+    </>
+  );
+}
+
+// ===================== Data shaping =====================
+
+async function buildBestPick(
+  approved: ApprovedSuggestion[],
+  userId: string,
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"]
+): Promise<BestPick | null> {
+  const top = approved[0];
+  if (!top) return null;
+
+  const rel = Array.isArray(top.request) ? top.request[0] : top.request;
+  const itemIds = top.item_ids ?? [];
+
+  // Load member items (owner-scoped; RLS also enforces ownership).
+  let members: WardrobeItem[] = [];
+  if (itemIds.length) {
+    const { data } = await supabase
+      .from("wardrobe_items")
+      .select("*")
+      .eq("user_id", userId)
+      .in("id", itemIds);
+    members = (data ?? []) as WardrobeItem[];
+  }
+  const byId = new Map(members.map((m) => [m.id, m]));
+  const urls = await signWardrobePaths(members.map((m) => m.image_path));
+
+  // Preserve the stylist's item order.
+  const rows: OutfitItem[] = itemIds
+    .map((id) => byId.get(id))
+    .filter((m): m is WardrobeItem => Boolean(m))
+    .map((m) => ({
+      kind: toGarment(m.category, m.sub_category),
+      color: colorToHex(m.color),
+      image: urls[m.image_path] ?? null,
+      label: m.user_facing_name ?? m.category ?? "Item",
+      sub: [m.category, m.color].filter(Boolean).join(" · ") || undefined,
+      note: m.last_worn_at ? `Worn ${new Date(m.last_worn_at).toLocaleDateString()}` : undefined,
+    }));
+
+  const thumbs = itemIds
+    .map((id) => byId.get(id))
+    .filter((m): m is WardrobeItem => Boolean(m))
+    .map((m) => urls[m.image_path])
+    .filter((u): u is string => Boolean(u));
+
+  const reasoning: ReasoningItem[] = [];
+  if (top.description) {
+    reasoning.push({ tag: "Why this works", body: top.description, icon: <Icon.Sparkle className="h-3.5 w-3.5 text-plum" /> });
+  }
+  if (top.avoid_note) {
+    reasoning.push({ tag: "Keep in mind", body: top.avoid_note, icon: <Icon.Sun className="h-3.5 w-3.5 text-champagne" /> });
+  }
+  if (top.missing_item_suggestion) {
+    reasoning.push({ tag: "Would complete it", body: top.missing_item_suggestion, icon: <Icon.Hanger className="h-3.5 w-3.5 text-cobalt" /> });
+  }
+
+  const hasAlternatives = approved.some((s) => s.request_id === top.request_id && s.id !== top.id);
+
+  return {
+    suggestionId: top.id,
+    requestId: top.request_id,
+    title: top.title || "Today's outfit",
+    occasion: rel ? occasionLabel(rel.occasion) : "Your day",
+    context: rel?.notes ?? null,
+    confidence: top.ai_confidence != null ? Math.round(top.ai_confidence * 100) : null,
+    itemIds,
+    rows,
+    thumbs,
+    reasoning,
+    hasAlternatives,
+  };
+}
+
+/** Map a wardrobe category/sub-category to the closest garment illustration. */
+function toGarment(category?: string | null, sub?: string | null): GarmentKind {
+  const c = `${sub ?? ""} ${category ?? ""}`.toLowerCase();
+  if (/\b(jean|denim)\b/.test(c)) return "Jeans";
+  if (/(trouser|chino|pant|legging|palazzo|bottom|jogger)/.test(c)) return "Pants";
+  if (/skirt/.test(c)) return "Skirt";
+  if (/(saree|sari|gown|dress|anarkali|lehenga)/.test(c)) return "Dress";
+  if (/(sneaker|trainer)/.test(c)) return "Sneaker";
+  if (/(footwear|shoe|heel|flat|sandal|loafer|mule|boot)/.test(c)) return "Loafer";
+  if (/(outerwear|jacket|blazer|coat|overshirt)/.test(c)) return "Jacket";
+  if (/(sweater|knit|cardigan|pullover)/.test(c)) return "Sweater";
+  if (/(belt)/.test(c)) return "Belt";
+  if (/(watch|accessory|jewel|bag|clutch|earring|stud)/.test(c)) return "Watch";
+  if (/(tee|t-shirt|tshirt)/.test(c)) return "Tshirt";
+  return "Shirt"; // tops, kurta, kurti, blouse, shirt, dupatta → default
+}
+
+/** Map a colour name to a swatch hex for vector tiles (used only without a photo). */
+function colorToHex(color?: string | null): string {
+  const map: Record<string, string> = {
+    white: "#F4F0E8", ivory: "#F2ECE0", cream: "#F2ECE0", beige: "#E3D8C6",
+    black: "#1C1A17", grey: "#8A857C", gray: "#8A857C", charcoal: "#2B2925",
+    navy: "#2A3852", blue: "#3A4E7A", "sky blue": "#9DB6D6",
+    red: "#9E3B36", maroon: "#5A2330", pink: "#C98BA0", rose: "#C98BA0",
+    green: "#5E7351", olive: "#6B6A3A", sage: "#8AA17C",
+    yellow: "#D8B24A", gold: "#B8915A", mustard: "#C79A3E",
+    brown: "#7B4B2E", tan: "#B98D63", camel: "#B98D63",
+    purple: "#5C4A6E", plum: "#4A2C3D", lavender: "#C4BBD4",
+    orange: "#C77A5A", terracotta: "#C77A5A",
+  };
+  const key = (color ?? "").trim().toLowerCase();
+  return map[key] ?? "#EAE3D7";
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function dateLabel() {
+  return new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+}

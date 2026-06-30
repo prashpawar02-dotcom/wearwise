@@ -13,3 +13,4 @@ tsconfig.tsbuildinfo
 
 # Leftover from a failed git init over a mounted filesystem
 .git-broken-*/
+.env*

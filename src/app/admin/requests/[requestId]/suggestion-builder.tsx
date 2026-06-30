@@ -11,7 +11,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { OutfitSuggestion, WardrobeItem } from "@/lib/types";
-import { Check, Trash2 } from "lucide-react";
+import { Check, Trash2, Sparkles, Loader2, AlertCircle, Plus } from "lucide-react";
+import { validateOutfitItems } from "@/lib/outfitValidation";
 
 export function SuggestionBuilder({
   requestId,
@@ -27,180 +28,268 @@ export function SuggestionBuilder({
   existing: OutfitSuggestion[];
 }) {
   const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const supabase = createClient();
+  const [generating, setGenerating] = useState(false);
+  const [genMsg, setGenMsg] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+  const [adding, setAdding] = useState(false);
 
-  function toggle(id: string) {
-    setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  async function generate() {
+    if (existing.length > 0 && !confirm("Replace the current draft suggestions with fresh AI drafts? Approved looks are kept.")) return;
+    setGenerating(true);
+    setGenMsg(null);
+    try {
+      const res = await fetch(`/api/outfit-requests/${requestId}/generate-drafts`, { method: "POST" });
+      const data = await res.json().catch(() => ({ status: "error" }));
+      if (data.status === "ok") {
+        router.refresh();
+      } else if (data.status === "insufficient") {
+        setGenMsg({ kind: "info", text: data.message });
+      } else {
+        setGenMsg({ kind: "error", text: "Couldn't generate drafts right now. Please try again." });
+      }
+    } catch {
+      setGenMsg({ kind: "error", text: "Couldn't generate drafts right now. Please try again." });
+    } finally {
+      setGenerating(false);
+    }
   }
 
-  const supabase = createClient();
-
-  async function createDraft() {
-    if (selected.length === 0) { setError("Select at least one item for the look."); return; }
-    if (existing.length >= 3) { setError("This request already has 3 suggestions."); return; }
-    setBusy(true);
-    setError("");
-    const { error } = await supabase.from("outfit_suggestions").insert({
-      request_id: requestId,
-      user_id: userId,
-      title: title || null,
-      description: description || null,
-      item_ids: selected,
-      status: "draft",
-      position: existing.length + 1,
+  async function addBlank() {
+    setAdding(true);
+    await supabase.from("outfit_suggestions").insert({
+      request_id: requestId, user_id: userId, title: "New look",
+      item_ids: [], status: "draft", source: "manual", position: existing.length + 1,
     });
-    // Move request into review when first draft is added.
     await supabase.from("outfit_requests").update({ status: "in_review" }).eq("id", requestId);
-    if (error) { setError(error.message); setBusy(false); return; }
-    setTitle(""); setDescription(""); setSelected([]);
-    setBusy(false);
+    setAdding(false);
     router.refresh();
   }
 
-  async function approve(id: string) {
+  return (
+    <div className="space-y-6">
+      {/* Generate */}
+      <section className="rounded-xl border border-plum/25 bg-plum/5 p-4">
+        <div className="flex items-start gap-2">
+          <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-plum" />
+          <div className="flex-1">
+            <p className="font-medium">AI outfit drafts</p>
+            <p className="text-xs text-muted-foreground">
+              Generates 3 draft looks from this user&apos;s wardrobe. Drafts are private until you approve them.
+            </p>
+          </div>
+        </div>
+        <Button onClick={generate} size="full" className="mt-3" disabled={generating}>
+          {generating ? (<><Loader2 className="h-4 w-4 animate-spin" /> Generating…</>) :
+            existing.length > 0 ? "Regenerate AI drafts" : "Generate AI outfit drafts"}
+        </Button>
+        {genMsg && (
+          <div className={cn(
+            "mt-3 flex items-start gap-2 rounded-lg border p-2.5 text-xs",
+            genMsg.kind === "error" ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-gold/40 bg-gold/10 text-muted-foreground"
+          )}>
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{genMsg.text}</span>
+          </div>
+        )}
+      </section>
+
+      {/* Suggestions (editable) */}
+      <section>
+        <div className="flex items-center justify-between">
+          <h2 className="font-serif text-lg font-semibold">Suggestions ({existing.length})</h2>
+          <Button variant="ghost" size="sm" onClick={addBlank} disabled={adding}>
+            <Plus className="h-4 w-4" /> Manual
+          </Button>
+        </div>
+
+        {existing.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            No suggestions yet. Generate AI drafts above, or add one manually.
+          </p>
+        ) : (
+          <div className="mt-3 space-y-4">
+            {existing.map((s, idx) => (
+              <DraftCard key={s.id} suggestion={s} index={idx} items={items} urls={urls} requestId={requestId} />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function DraftCard({
+  suggestion: s, index, items, urls, requestId,
+}: {
+  suggestion: OutfitSuggestion; index: number; items: WardrobeItem[];
+  urls: Record<string, string>; requestId: string;
+}) {
+  const router = useRouter();
+  const supabase = createClient();
+  const [title, setTitle] = useState(s.title ?? "");
+  const [reason, setReason] = useState(s.description ?? "");
+  const [avoidNote, setAvoidNote] = useState(s.avoid_note ?? "");
+  const [missing, setMissing] = useState(s.missing_item_suggestion ?? "");
+  const [selected, setSelected] = useState<string[]>(s.item_ids ?? []);
+  const [editingItems, setEditingItems] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const itemById = new Map(items.map((i) => [i.id, i]));
+  const selectedItems = selected
+    .map((id) => itemById.get(id))
+    .filter((it): it is WardrobeItem => Boolean(it));
+  const validation = validateOutfitItems(selectedItems);
+  function toggle(id: string) {
+    setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    setSaved(false);
+  }
+
+  async function save() {
+    setBusy(true);
+    await supabase.from("outfit_suggestions").update({
+      title: title || null,
+      description: reason || null,
+      avoid_note: avoidNote || null,
+      missing_item_suggestion: missing || null,
+      item_ids: selected,
+    }).eq("id", s.id);
+    setBusy(false); setSaved(true);
+    router.refresh();
+  }
+
+  async function approve() {
     setBusy(true);
     const { data: { user } } = await supabase.auth.getUser();
-    await supabase
-      .from("outfit_suggestions")
-      .update({ status: "approved", approved_by: user?.id ?? null, approved_at: new Date().toISOString() })
-      .eq("id", id);
+    await supabase.from("outfit_suggestions").update({
+      status: "approved", approved_by: user?.id ?? null, approved_at: new Date().toISOString(),
+    }).eq("id", s.id);
     await supabase.from("outfit_requests").update({ status: "fulfilled" }).eq("id", requestId);
     setBusy(false);
     router.refresh();
   }
 
-  async function reject(id: string) {
+  async function reject() {
     setBusy(true);
-    await supabase.from("outfit_suggestions").update({ status: "rejected" }).eq("id", id);
+    await supabase.from("outfit_suggestions").update({ status: "rejected" }).eq("id", s.id);
     setBusy(false);
     router.refresh();
   }
 
-  async function del(id: string) {
+  async function del() {
     if (!confirm("Delete this suggestion?")) return;
     setBusy(true);
-    await supabase.from("outfit_suggestions").delete().eq("id", id);
+    await supabase.from("outfit_suggestions").delete().eq("id", s.id);
     setBusy(false);
     router.refresh();
   }
 
-  const itemById = new Map(items.map((i) => [i.id, i]));
-
   return (
-    <div className="space-y-8">
-      {/* Existing suggestions */}
-      {existing.length > 0 && (
-        <section>
-          <h2 className="font-serif text-lg font-semibold">Suggestions ({existing.length}/3)</h2>
-          <div className="mt-3 space-y-3">
-            {existing.map((s, idx) => (
-              <Card key={s.id}>
-                <CardContent className="pt-4">
-                  <div className="flex items-center justify-between">
-                    <p className="font-medium">{s.title || `Look ${idx + 1}`}</p>
-                    <Badge tone={s.status === "approved" ? "sage" : s.status === "rejected" ? "muted" : "gold"}>
-                      {s.status}
-                    </Badge>
-                  </div>
-                  {s.description && <p className="mt-1 text-sm text-muted-foreground">{s.description}</p>}
-                  <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                    {s.item_ids.map((id) => {
-                      const it = itemById.get(id);
-                      if (!it) return null;
-                      return (
-                        <div key={id} className="aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
-                          {urls[it.image_path] && (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={urls[it.image_path]} alt="" className="h-full w-full object-cover" />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-3 flex gap-2">
-                    {s.status !== "approved" && (
-                      <Button size="sm" onClick={() => approve(s.id)} disabled={busy}>
-                        <Check className="h-4 w-4" /> Approve
-                      </Button>
-                    )}
-                    {s.status !== "rejected" && s.status !== "approved" && (
-                      <Button size="sm" variant="outline" onClick={() => reject(s.id)} disabled={busy}>
-                        Reject
-                      </Button>
-                    )}
-                    <Button size="sm" variant="ghost" onClick={() => del(s.id)} disabled={busy}
-                      className="text-destructive hover:bg-destructive/10">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+    <Card>
+      <CardContent className="space-y-3 pt-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">Look {index + 1}</span>
+            {s.source === "ai" && <Badge tone="plum">AI</Badge>}
+            {typeof s.ai_confidence === "number" && (
+              <span className="text-xs text-muted-foreground">{Math.round(s.ai_confidence * 100)}%</span>
+            )}
           </div>
-        </section>
-      )}
+          <Badge tone={s.status === "approved" ? "sage" : s.status === "rejected" ? "muted" : "gold"}>
+            {s.status}
+          </Badge>
+        </div>
 
-      {/* New suggestion builder */}
-      {existing.length < 3 && (
-        <section>
-          <h2 className="font-serif text-lg font-semibold">Build a new look</h2>
-          <div className="mt-3 space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="title">Title</Label>
-              <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Easy office elegance" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="desc">Styling note</Label>
-              <Textarea id="desc" value={description} onChange={(e) => setDescription(e.target.value)}
-                placeholder="Why this works and how to wear it." />
-            </div>
+        <div className="space-y-1.5">
+          <Label>Title</Label>
+          <Input value={title} onChange={(e) => { setTitle(e.target.value); setSaved(false); }} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Styling reason</Label>
+          <Textarea value={reason} onChange={(e) => { setReason(e.target.value); setSaved(false); }} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>What to avoid</Label>
+          <Input value={avoidNote} onChange={(e) => { setAvoidNote(e.target.value); setSaved(false); }} placeholder="Optional" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Missing item (optional)</Label>
+          <Input value={missing} onChange={(e) => { setMissing(e.target.value); setSaved(false); }} placeholder="Optional" />
+        </div>
 
-            <div className="space-y-2">
-              <Label>Pick items from her wardrobe ({selected.length} selected)</Label>
-              {items.length === 0 ? (
-                <p className="text-sm text-muted-foreground">This user has no wardrobe items yet.</p>
-              ) : (
-                <div className="grid grid-cols-3 gap-2">
-                  {items.map((it) => {
-                    const active = selected.includes(it.id);
-                    return (
-                      <button
-                        key={it.id}
-                        type="button"
-                        onClick={() => toggle(it.id)}
-                        className={cn(
-                          "relative aspect-[3/4] overflow-hidden rounded-lg border-2 bg-muted",
-                          active ? "border-plum" : "border-transparent"
-                        )}
-                      >
-                        {urls[it.image_path] && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={urls[it.image_path]} alt="" className="h-full w-full object-cover" />
-                        )}
-                        {active && (
-                          <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-plum text-primary-foreground">
-                            <Check className="h-3 w-3" />
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+        {/* Selected items */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <Label>Items ({selected.length})</Label>
+            <button onClick={() => setEditingItems((v) => !v)} className="text-xs text-plum hover:underline">
+              {editingItems ? "Done" : "Edit items"}
+            </button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {selected.map((id) => {
+              const it = itemById.get(id);
+              if (!it) return null;
+              return (
+                <div key={id} className="aspect-[3/4] w-14 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
+                  {urls[it.image_path] && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={urls[it.image_path]} alt="" className="h-full w-full object-cover" />
+                  )}
                 </div>
-              )}
-            </div>
-
-            {error && <p className="text-sm text-destructive">{error}</p>}
-
-            <Button onClick={createDraft} size="full" disabled={busy}>
-              {busy ? "Saving…" : "Save as draft"}
-            </Button>
+              );
+            })}
+            {selected.length === 0 && <p className="text-xs text-muted-foreground">No items selected.</p>}
           </div>
-        </section>
-      )}
-    </div>
+
+          {editingItems && (
+            <div className="grid grid-cols-4 gap-2 rounded-lg border border-border p-2">
+              {items.map((it) => {
+                const active = selected.includes(it.id);
+                return (
+                  <button key={it.id} type="button" onClick={() => toggle(it.id)}
+                    className={cn("relative aspect-[3/4] overflow-hidden rounded-md border-2 bg-muted", active ? "border-plum" : "border-transparent")}>
+                    {urls[it.image_path] && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={urls[it.image_path]} alt="" className="h-full w-full object-cover" />
+                    )}
+                    {active && (
+                      <span className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-plum text-primary-foreground">
+                        <Check className="h-2.5 w-2.5" />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {selected.length > 0 && !validation.valid && (
+          <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-destructive">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <span className="font-medium">Invalid outfit &mdash; can&apos;t approve.</span> {validation.reason} Adjust the items first.
+            </span>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button size="sm" variant="outline" onClick={save} disabled={busy}>
+            {saved ? "Saved" : "Save edits"}
+          </Button>
+          {s.status !== "approved" && (
+            <Button size="sm" onClick={approve} disabled={busy || selected.length === 0 || !validation.valid}>
+              <Check className="h-4 w-4" /> Approve
+            </Button>
+          )}
+          {s.status !== "rejected" && s.status !== "approved" && (
+            <Button size="sm" variant="ghost" onClick={reject} disabled={busy}>Reject</Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={del} disabled={busy} className="text-destructive hover:bg-destructive/10">
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
