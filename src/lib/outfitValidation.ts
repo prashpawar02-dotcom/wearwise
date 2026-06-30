@@ -95,12 +95,22 @@ export function validateOutfitItems(items: RoleClassifiableItem[]): ValidationRe
   }
 
   const roles = items.map(roleForItem);
+
+  // FAIL CLOSED: any item we can't classify (missing category/name, or an
+  // unrecognized type) blocks the whole look. We never approve an outfit we
+  // can't reason about.
+  if (roles.some((r) => r === "unknown")) {
+    return {
+      valid: false,
+      reason: "This look includes an item with a missing or unrecognized type, so it can't be approved.",
+    };
+  }
+
   const count = (r: GarmentRole) => roles.filter((x) => x === r).length;
 
   const upper = count("upper");
   const bottom = count("bottom");
   const onePiece = count("one_piece") + count("outfit_reference");
-  const unknown = count("unknown");
 
   const kurtaCount = items.filter(isKurtaItem).length;
   const plainUpperCount = items.filter(
@@ -145,22 +155,32 @@ export function validateOutfitItems(items: RoleClassifiableItem[]): ValidationRe
     return { valid: true }; // upper + bottom (+ optional dupatta/accessory/footwear/outerwear)
   }
 
-  // Nothing formed a valid structure (e.g. only accessories, or unknown items).
-  if (unknown > 0) {
-    return { valid: false, reason: "This look includes an unrecognized item and no clear top + bottom or one-piece." };
-  }
+  // Nothing formed a valid structure (e.g. only accessories/footwear).
   return { valid: false, reason: "Couldn't confirm a complete outfit — need a top + bottom, or a single one-piece." };
 }
 
-/** Resolve item ids against a lookup, then validate. Convenience for callers. */
+/**
+ * Resolve item ids against a lookup, then validate. FAILS CLOSED: if the id
+ * list is empty, or ANY id can't be resolved to a real item, the outfit is
+ * invalid (we never silently drop items and approve a partial look).
+ */
 export function validateOutfitByIds(
   itemIds: string[],
   itemsById: Map<string, RoleClassifiableItem>
 ): ValidationResult {
+  if (!itemIds || itemIds.length === 0) {
+    return { valid: false, reason: "This look has no items." };
+  }
   const items: RoleClassifiableItem[] = [];
   for (const id of itemIds) {
     const it = itemsById.get(id);
-    if (it) items.push(it);
+    if (!it) {
+      return {
+        valid: false,
+        reason: "An item in this look couldn't be found in the wardrobe, so it can't be approved.",
+      };
+    }
+    items.push(it);
   }
   return validateOutfitItems(items);
 }
