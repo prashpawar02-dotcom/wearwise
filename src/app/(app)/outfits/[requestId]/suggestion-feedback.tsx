@@ -5,23 +5,45 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-// Optional structured reasons, shown only when the response is negative/unsure.
-const REASONS = [
-  "Bad color match",
-  "Not my style",
-  "Missing item",
-  "Too casual",
-  "Too formal",
-  "I would not wear this combo",
+type WouldWear = "yes" | "maybe" | "no";
+
+// Context-aware reasons for "Would you wear this?":
+//   - Maybe = the look has potential but needs adjustment (refinement signal)
+//   - No    = the user wouldn't wear it (rejection signal)
+//   - Yes   = positive signal; no reason dropdown is shown
+const REFINE_REASONS = [
+  "Needs a different bottom",
+  "Needs a different top",
+  "Needs better color matching",
+  "Too simple, needs styling",
+  "Too bold for me",
+  "Not sure about the fit",
+  "Better for another occasion",
+  "I need accessories/footwear suggestion",
+  "I like the idea but would tweak it",
   "Other",
 ] as const;
 
-type WouldWear = "yes" | "maybe" | "no";
+const REJECT_REASONS = [
+  "Not my style",
+  "Bad color match",
+  "Wrong occasion",
+  "Too casual",
+  "Too formal",
+  "Missing item",
+  "I would not wear this combo",
+  "Looks unrealistic",
+  "Other",
+] as const;
 
 /**
  * Lightweight, mobile-first feedback on an APPROVED outfit suggestion.
  * Writes to public.outfit_suggestion_feedback. RLS guarantees a user can only
  * insert feedback for their own suggestion, so no extra server route is needed.
+ *
+ * The reason dropdown is context-aware off "Would you wear this?": Maybe shows
+ * refinement options, No shows rejection options, Yes shows none. The selected
+ * option is stored in the existing `reason` field and the note in `note`.
  */
 export function SuggestionFeedback({
   suggestionId,
@@ -38,8 +60,29 @@ export function SuggestionFeedback({
   const [status, setStatus] = useState<"idle" | "saving" | "done" | "error">("idle");
   const [error, setError] = useState("");
 
-  const negative = useful === false || wouldWear === "maybe" || wouldWear === "no";
+  // Reason set depends on the "would wear" answer.
+  const reasonOptions =
+    wouldWear === "maybe" ? REFINE_REASONS : wouldWear === "no" ? REJECT_REASONS : null;
+  const reasonLabel =
+    wouldWear === "maybe" ? "What would make this wearable?" : "Why would you not wear this?";
+  const showReason = reasonOptions !== null;
+  const showNote = wouldWear !== "";
+  const notePlaceholder =
+    wouldWear === "yes"
+      ? "What did you like about this look?"
+      : wouldWear === "maybe"
+        ? "What would you change?"
+        : wouldWear === "no"
+          ? "Tell us what felt wrong."
+          : "Anything else? (optional)";
+
   const canSubmit = useful !== null || wouldWear !== "";
+
+  // Switching the "would wear" answer changes which reasons apply, so reset.
+  function pickWouldWear(v: WouldWear) {
+    setWouldWear(v);
+    setReason("");
+  }
 
   async function submit() {
     if (!canSubmit) return;
@@ -55,7 +98,7 @@ export function SuggestionFeedback({
       user_id: user.id,
       useful,
       would_wear: wouldWear || null,
-      reason: negative ? (reason || null) : null,
+      reason: showReason ? (reason || null) : null,
       note: note.trim() ? note.trim().slice(0, 300) : null,
     });
     if (insErr) { setStatus("error"); setError("Couldn't save your feedback. Please try again."); return; }
@@ -90,15 +133,15 @@ export function SuggestionFeedback({
       </Segment>
 
       <Segment label="Would you wear this?">
-        <Choice active={wouldWear === "yes"} onClick={() => setWouldWear("yes")}>Yes</Choice>
-        <Choice active={wouldWear === "maybe"} onClick={() => setWouldWear("maybe")}>Maybe</Choice>
-        <Choice active={wouldWear === "no"} onClick={() => setWouldWear("no")}>No</Choice>
+        <Choice active={wouldWear === "yes"} onClick={() => pickWouldWear("yes")}>Yes</Choice>
+        <Choice active={wouldWear === "maybe"} onClick={() => pickWouldWear("maybe")}>Maybe</Choice>
+        <Choice active={wouldWear === "no"} onClick={() => pickWouldWear("no")}>No</Choice>
       </Segment>
 
-      {negative && (
-        <div className="space-y-2">
-          <label className="block text-xs text-graphite" htmlFor={`reason-${suggestionId}`}>
-            What was off? (optional)
+      {showReason && reasonOptions && (
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-graphite" htmlFor={`reason-${suggestionId}`}>
+            {reasonLabel}
           </label>
           <select
             id={`reason-${suggestionId}`}
@@ -106,20 +149,23 @@ export function SuggestionFeedback({
             onChange={(e) => setReason(e.target.value)}
             className="h-10 w-full rounded-ww-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <option value="">Select a reason…</option>
-            {REASONS.map((r) => (
+            <option value="">Select…</option>
+            {reasonOptions.map((r) => (
               <option key={r} value={r}>{r}</option>
             ))}
           </select>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={2}
-            maxLength={300}
-            placeholder="Anything else? (optional)"
-            className="w-full rounded-ww-sm border border-input bg-card px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
         </div>
+      )}
+
+      {showNote && (
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          maxLength={300}
+          placeholder={notePlaceholder}
+          className="w-full rounded-ww-sm border border-input bg-card px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
       )}
 
       {error && <p className="text-xs text-destructive">{error}</p>}
