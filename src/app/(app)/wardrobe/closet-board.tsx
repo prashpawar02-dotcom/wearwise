@@ -60,7 +60,7 @@ export function ClosetBoard({
       : byZone.hanging.length < 3
         ? "Add a few tops or shirts to expand your looks."
         : byZone.accessories.length < 1
-          ? "A belt or watch can finish off more looks."
+          ? "Add 1 accessory to unlock more complete looks."
           : null;
 
   const filtered = useMemo(() => {
@@ -92,7 +92,7 @@ export function ClosetBoard({
   ];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-8">
       <Header
         count={items.length}
         searchOpen={searchOpen}
@@ -121,18 +121,18 @@ export function ClosetBoard({
       {/* Closet Board hero */}
       <section className="overflow-hidden rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm">
         <RailZone items={byZone.hanging} urls={urls} />
-        <div className="my-4 h-px bg-stone" />
+        <ZoneDivider />
         <ShelfZone items={byZone.folded} urls={urls} />
-        <div className="my-4 h-px bg-stone" />
+        <ZoneDivider />
         <ShoeZone items={byZone.shoes} urls={urls} />
-        <div className="my-4 h-px bg-stone" />
+        <ZoneDivider />
         <TrayZone items={byZone.accessories} urls={urls} />
       </section>
 
-      {/* Quick filters */}
-      <div className="no-scrollbar -mx-6 flex gap-2 overflow-x-auto px-6">
+      {/* Quick filters — wrap so nothing clips on mobile */}
+      <div className="flex flex-wrap gap-2 pt-1">
         {filters.map((f) => (
-          <button key={f.key} type="button" onClick={() => setFilter(f.key)} className="shrink-0" aria-pressed={filter === f.key}>
+          <button key={f.key} type="button" onClick={() => setFilter(f.key)} aria-pressed={filter === f.key}>
             <Chip tone={filter === f.key ? "filled" : "default"}>
               {f.label}
               <span className="font-mono text-[10px] opacity-60">{f.count}</span>
@@ -224,19 +224,21 @@ function Stat({ value, label, tone }: { value: number; label: string; tone?: "ch
 
 // ===================== Board zones =====================
 
-function ZoneHead({ zone }: { zone: Zone }) {
+/** Slightly stronger separator between closet zones. */
+function ZoneDivider() {
+  return <div className="my-5 h-px bg-mist/40" aria-hidden="true" />;
+}
+
+function ZoneHead({ zone, action }: { zone: Zone; action?: React.ReactNode }) {
   return (
-    <div className="mb-2.5 flex items-baseline justify-between">
+    <div className="mb-3 flex items-baseline justify-between gap-2">
       <div>
         <p className="ww-eyebrow text-plum">{ZONE_META[zone].title}</p>
         <p className="text-xs text-graphite">{ZONE_META[zone].subtitle}</p>
       </div>
+      {action}
     </div>
   );
-}
-
-function ZoneEmpty({ text }: { text: string }) {
-  return <p className="py-2 text-xs text-mist">{text}</p>;
 }
 
 function MiniTile({
@@ -280,16 +282,16 @@ function RailZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
     <div>
       <ZoneHead zone="hanging" />
       {shown.length === 0 ? (
-        <ZoneEmpty text="No hanging pieces yet." />
+        <p className="py-2 text-xs text-mist">No hanging pieces yet.</p>
       ) : (
-        <div className="relative pt-3">
+        <div className="relative pt-3.5">
           {/* rail line */}
-          <div className="absolute left-0 right-0 top-0 h-0.5 rounded-full bg-mist/50" aria-hidden="true" />
-          <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1">
+          <div className="absolute left-0 right-0 top-0 h-[3px] rounded-full bg-mist/60" aria-hidden="true" />
+          <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1 pr-4">
             {shown.map((item) => (
-              <Link key={item.id} href={`/wardrobe/${item.id}`} className="flex w-16 shrink-0 flex-col items-center">
-                <span className="h-3 w-px bg-mist/60" aria-hidden="true" />
-                <MiniTile item={item} url={urls[item.image_path]} size={64} />
+              <Link key={item.id} href={`/wardrobe/${item.id}`} className="flex w-[76px] shrink-0 flex-col items-center">
+                <span className="h-3.5 w-px bg-mist/70" aria-hidden="true" />
+                <MiniTile item={item} url={urls[item.image_path]} size={76} className="shadow-ww-sm" />
                 <span className="mt-1 w-full truncate text-center text-[10px] text-graphite">{itemName(item)}</span>
               </Link>
             ))}
@@ -306,18 +308,13 @@ function ShelfZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string
     <div>
       <ZoneHead zone="folded" />
       {shown.length === 0 ? (
-        <ZoneEmpty text="Nothing folded yet." />
+        <p className="py-2 text-xs text-mist">Nothing folded yet.</p>
       ) : (
-        <div className="rounded-ww-sm border-y border-stone bg-ivory/40 px-1 py-2">
-          <div className="flex items-end">
-            {shown.map((item, i) => (
-              <Link
-                key={item.id}
-                href={`/wardrobe/${item.id}`}
-                className={cn("shrink-0", i > 0 && "-ml-2")}
-                style={{ zIndex: shown.length - i }}
-              >
-                <MiniTile item={item} url={urls[item.image_path]} size={56} rounded="rounded-ww-xs" className="ring-2 ring-bone" />
+        <div className="rounded-ww-sm border-b-2 border-stone">
+          <div className="no-scrollbar flex gap-3 overflow-x-auto px-0.5 pb-2 pr-4">
+            {shown.map((item) => (
+              <Link key={item.id} href={`/wardrobe/${item.id}`} className="shrink-0">
+                <MiniTile item={item} url={urls[item.image_path]} size={76} rounded="rounded-ww-sm" className="shadow-ww-sm" />
               </Link>
             ))}
           </div>
@@ -333,12 +330,12 @@ function ShoeZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
     <div>
       <ZoneHead zone="shoes" />
       {shown.length === 0 ? (
-        <ZoneEmpty text="No shoes yet." />
+        <p className="py-2 text-xs text-mist">No shoes yet.</p>
       ) : (
-        <div className="flex gap-3 border-t border-stone pt-3">
+        <div className="flex gap-3 border-b-2 border-stone pb-3 pr-4">
           {shown.map((item) => (
             <Link key={item.id} href={`/wardrobe/${item.id}`} className="shrink-0">
-              <MiniTile item={item} url={urls[item.image_path]} size={56} className="shadow-ww-md" />
+              <MiniTile item={item} url={urls[item.image_path]} size={64} className="shadow-ww-md" />
             </Link>
           ))}
         </div>
@@ -351,15 +348,29 @@ function TrayZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
   const shown = items.slice(0, 6);
   return (
     <div>
-      <ZoneHead zone="accessories" />
+      <ZoneHead
+        zone="accessories"
+        action={
+          <Link href="/wardrobe/upload" className="shrink-0 text-xs font-medium text-plum hover:underline">
+            Add accessory
+          </Link>
+        }
+      />
       {shown.length === 0 ? (
-        <ZoneEmpty text="No accessories yet." />
+        <div className="rounded-ww-md border border-dashed border-hairline-strong bg-stone/30 p-3">
+          <p className="text-xs text-graphite">
+            No accessories yet. Add a belt, watch, bag, dupatta, or jewelry to complete more looks.
+          </p>
+          <Button asChild size="sm" variant="secondary" className="mt-2.5">
+            <Link href="/wardrobe/upload"><Icon.Plus className="h-3.5 w-3.5" /> Add accessory</Link>
+          </Button>
+        </div>
       ) : (
-        <div className="rounded-ww-md border border-hairline bg-stone/40 p-2.5">
-          <div className="flex flex-wrap gap-2">
+        <div className="rounded-ww-md border border-hairline bg-stone/40 p-3">
+          <div className="flex flex-wrap gap-2.5">
             {shown.map((item) => (
               <Link key={item.id} href={`/wardrobe/${item.id}`} className="shrink-0">
-                <MiniTile item={item} url={urls[item.image_path]} size={44} />
+                <MiniTile item={item} url={urls[item.image_path]} size={52} className="shadow-ww-sm" />
               </Link>
             ))}
           </div>
@@ -377,8 +388,8 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
   const analyzing = item.ai_tag_status === "analyzing";
 
   return (
-    <Link href={`/wardrobe/${item.id}`} className="group overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-xs">
-      <div className="relative aspect-[3/4] bg-stone">
+    <Link href={`/wardrobe/${item.id}`} className="group overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-sm">
+      <div className="relative aspect-[4/5] bg-stone">
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -416,7 +427,7 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
 
 function EmptyState() {
   return (
-    <div>
+    <div className="pb-8">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="ww-display text-3xl text-charcoal">Wardrobe</h1>
@@ -428,32 +439,32 @@ function EmptyState() {
       <div className="mt-5 space-y-4 rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm" aria-hidden="true">
         <div>
           <p className="ww-eyebrow text-plum">Hanging Rail</p>
-          <div className="relative mt-3 pt-3">
-            <div className="absolute left-0 right-0 top-0 h-0.5 rounded-full bg-mist/40" />
+          <div className="relative mt-3 pt-3.5">
+            <div className="absolute left-0 right-0 top-0 h-[3px] rounded-full bg-mist/40" />
             <div className="flex gap-3">
               {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="flex w-16 flex-col items-center">
-                  <span className="h-3 w-px bg-mist/40" />
-                  <div className="h-16 w-16 rounded-ww-sm border border-dashed border-hairline-strong bg-ivory/50" />
+                <div key={i} className="flex w-[76px] flex-col items-center">
+                  <span className="h-3.5 w-px bg-mist/40" />
+                  <div className="h-[76px] w-[76px] rounded-ww-sm border border-dashed border-hairline-strong bg-ivory/50" />
                 </div>
               ))}
             </div>
           </div>
         </div>
-        <div className="h-px bg-stone" />
+        <div className="h-px bg-mist/40" />
         <div>
           <p className="ww-eyebrow text-plum">Folded Shelf</p>
-          <div className="mt-3 h-12 rounded-ww-sm border-y border-stone bg-ivory/40" />
+          <div className="mt-3 h-16 rounded-ww-sm border-b-2 border-stone bg-ivory/40" />
         </div>
-        <div className="h-px bg-stone" />
+        <div className="h-px bg-mist/40" />
         <div>
           <p className="ww-eyebrow text-plum">Shoe Rack</p>
           <div className="mt-3 flex gap-3">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-14 w-14 rounded-ww-sm border border-dashed border-hairline-strong bg-ivory/50" />
+              <div key={i} className="h-16 w-16 rounded-ww-sm border border-dashed border-hairline-strong bg-ivory/50" />
             ))}
             {/* one glowing add tile */}
-            <div className="grid h-14 w-14 place-items-center rounded-ww-sm border border-plum/40 bg-plum/[0.06] shadow-ww-sm">
+            <div className="grid h-16 w-16 place-items-center rounded-ww-sm border border-plum/40 bg-plum/[0.06] shadow-ww-sm">
               <Icon.Plus className="h-5 w-5 text-plum" />
             </div>
           </div>

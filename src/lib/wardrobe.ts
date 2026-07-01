@@ -11,8 +11,8 @@ export type Zone = "hanging" | "folded" | "shoes" | "accessories";
 export const ZONE_ORDER: Zone[] = ["hanging", "folded", "shoes", "accessories"];
 
 export const ZONE_META: Record<Zone, { title: string; subtitle: string }> = {
-  hanging: { title: "Hanging Rail", subtitle: "Shirts, jackets, layers" },
-  folded: { title: "Folded Shelf", subtitle: "Tees, knits, denim, trousers" },
+  hanging: { title: "Hanging Rail", subtitle: "Tops, kurtas, dresses, layers" },
+  folded: { title: "Folded Shelf", subtitle: "Bottoms, tees, knits, folded pieces" },
   shoes: { title: "Shoe Rack", subtitle: "Shoes that complete the outfit" },
   accessories: { title: "Accessories Tray", subtitle: "Finishing pieces" },
 };
