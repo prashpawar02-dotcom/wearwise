@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { AppHeader } from "@/components/nav/app-header";
 import { roleForItem, type RoleClassifiableItem } from "@/lib/outfitValidation";
+import { isWearableItem } from "@/lib/wardrobe";
 import { getWeatherContext } from "@/lib/weather";
 import { OccasionForm } from "./occasion-form";
 
@@ -12,22 +13,23 @@ export default async function NewOccasionPage() {
   const [{ data }, { data: profile }] = await Promise.all([
     supabase
       .from("wardrobe_items")
-      .select("category, sub_category, user_facing_name")
+      .select("category, sub_category, user_facing_name, availability_status")
       .eq("user_id", user.id),
     supabase.from("profiles").select("city").eq("id", user.id).single(),
   ]);
 
-  const items = (data ?? []) as RoleClassifiableItem[];
+  const rows = (data ?? []) as (RoleClassifiableItem & { availability_status?: string | null })[];
+  // Only currently-available items count toward readiness (in-wash excluded).
+  const wearable = rows.filter(isWearableItem);
   const ready = {
-    tops: items.some((i) => {
+    tops: wearable.some((i) => {
       const r = roleForItem(i);
       return r === "upper" || r === "one_piece";
     }),
-    bottoms: items.some((i) => roleForItem(i) === "bottom"),
-    shoes: items.some((i) => roleForItem(i) === "footwear"),
+    bottoms: wearable.some((i) => roleForItem(i) === "bottom"),
+    shoes: wearable.some((i) => roleForItem(i) === "footwear"),
   };
 
-  // Honest weather context (null when no API key or no city).
   const weather = await getWeatherContext(profile?.city);
 
   return (
@@ -42,7 +44,12 @@ export default async function NewOccasionPage() {
           Choose the plan. WearWise will find one smart outfit from your wardrobe.
         </p>
         <div className="mt-6">
-          <OccasionForm itemCount={items.length} ready={ready} weather={weather} />
+          <OccasionForm
+            itemCount={rows.length}
+            wearableCount={wearable.length}
+            ready={ready}
+            weather={weather}
+          />
         </div>
       </div>
     </main>

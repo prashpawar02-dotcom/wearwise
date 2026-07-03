@@ -7,6 +7,7 @@ import {
   type CleanSuggestion,
 } from "@/lib/outfit-drafts";
 import { validateOutfitByIds, type RoleClassifiableItem } from "@/lib/outfitValidation";
+import { isWearableItem } from "@/lib/wardrobe";
 import type { WardrobeItem } from "@/lib/types";
 import { logAiUsage } from "@/lib/ai-costs";
 
@@ -41,12 +42,16 @@ export async function POST(_req: Request, { params }: { params: { requestId: str
   // ---- Load the requesting user's wardrobe ----
   const { data: itemsData } = await supabase
     .from("wardrobe_items").select("*").eq("user_id", request.user_id);
-  const items = (itemsData ?? []) as WardrobeItem[];
+  const allItems = (itemsData ?? []) as WardrobeItem[];
+  // Exclude in-wash / unavailable items from generation inputs (Laundry V1).
+  const items = allItems.filter(isWearableItem);
 
   if (items.length < MIN_ITEMS_FOR_DRAFTS) {
     return NextResponse.json({
       status: "insufficient",
-      message: "Not enough wardrobe items to generate strong outfit drafts. Ask user to upload more clothes.",
+      message: allItems.length >= MIN_ITEMS_FOR_DRAFTS
+        ? "A few items are unavailable (in wash). Mark clothes available or add more items to get better outfits."
+        : "Not enough wardrobe items to generate strong outfit drafts. Ask user to upload more clothes.",
     });
   }
 

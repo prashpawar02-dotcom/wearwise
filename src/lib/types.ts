@@ -28,6 +28,7 @@ export const PATTERNS = [
 export type RequestStatus = "pending" | "in_review" | "fulfilled" | "archived";
 export type SuggestionStatus = "draft" | "approved" | "rejected";
 export type AiTagStatus = "analyzing" | "tagged" | "needs_review" | "failed";
+export type AvailabilityStatus = "available" | "in_wash" | "unavailable";
 
 export const AUTOTAG_PRIVACY_COPY =
   "We use AI to identify clothing type, colour, and style from your wardrobe photos. Your wardrobe stays private.";
@@ -64,6 +65,8 @@ export interface WardrobeItem {
   ethnic_western_fusion: string | null;
   auto_tagged_at: string | null;
   user_corrected_tags: boolean;
+  // Laundry / availability (v0.7). Defaults to 'available' in the DB.
+  availability_status: AvailabilityStatus;
   created_at: string;
 }
 

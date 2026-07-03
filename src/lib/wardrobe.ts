@@ -125,3 +125,29 @@ export function lastWornLabel(item: WardrobeItem): string | null {
   const months = Math.round(d / 30);
   return `Worn ${months} ${months === 1 ? "month" : "months"} ago`;
 }
+
+// ---- Availability / laundry (real column: wardrobe_items.availability_status) ----
+
+/** Minimal shape carrying availability, so partial selects work too. */
+type WithAvailability = { availability_status?: string | null };
+
+/** Only 'available' items should feed outfit recommendations. */
+export function isWearableItem(item: WithAvailability): boolean {
+  return (item.availability_status ?? "available") === "available";
+}
+
+export function availabilityLabel(status?: string | null): string {
+  if (status === "in_wash") return "In wash";
+  if (status === "unavailable") return "Unavailable";
+  return "Available";
+}
+
+export type AvailabilityBadge = { label: string; tone: "wash" | "unavailable" };
+
+/** A calm, non-alarming badge for non-available items; null when available. */
+export function availabilityBadge(item: WithAvailability): AvailabilityBadge | null {
+  const s = item.availability_status ?? "available";
+  if (s === "in_wash") return { label: "In wash", tone: "wash" };
+  if (s === "unavailable") return { label: "Unavailable", tone: "unavailable" };
+  return null;
+}

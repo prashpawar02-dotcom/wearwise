@@ -2,15 +2,18 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { GarmentTile } from "@/components/wearwise/GarmentTile";
-import { OCCASIONS, type Occasion, type WardrobeItem } from "@/lib/types";
+import { OCCASIONS, type AvailabilityStatus, type Occasion, type WardrobeItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   ZONE_META,
   ZONE_ORDER,
+  availabilityBadge,
   colorToHex,
   garmentKindForItem,
   itemBadge,
@@ -19,10 +22,12 @@ import {
   type Zone,
 } from "@/lib/wardrobe";
 
-type FilterKey = "all" | Zone | "needs_review";
+type FilterKey = "all" | Zone | "in_wash" | "needs_review";
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
 const itemName = (it: WardrobeItem) => it.user_facing_name ?? it.category ?? "Untagged item";
+const statusOf = (it: WardrobeItem): AvailabilityStatus =>
+  (it.availability_status ?? "available") as AvailabilityStatus;
 
 export function ClosetBoard({
   items,
@@ -35,20 +40,21 @@ export function ClosetBoard({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  const inWash = useMemo(() => items.filter((i) => statusOf(i) === "in_wash"), [items]);
+
+  // Category zones show everything except items set aside in the wash.
   const byZone = useMemo(() => {
     const m: Record<Zone, WardrobeItem[]> = { hanging: [], folded: [], occasion: [], shoes: [], accessories: [] };
-    for (const it of items) m[zoneForItem(it)].push(it);
+    for (const it of items) {
+      if (statusOf(it) === "in_wash") continue;
+      m[zoneForItem(it)].push(it);
+    }
     return m;
   }, [items]);
 
-  const needsReview = useMemo(
-    () => items.filter((i) => i.ai_tag_status === "needs_review"),
-    [items]
-  );
-
+  const needsReview = useMemo(() => items.filter((i) => i.ai_tag_status === "needs_review"), [items]);
   const zonesRepresented = ZONE_ORDER.filter((z) => byZone[z].length > 0).length;
 
-  // Closet health — real signals only (no fake AI claims).
   const strongestOccasion = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const it of items) for (const o of it.occasion_tags ?? []) counts[o] = (counts[o] ?? 0) + 1;
@@ -66,8 +72,12 @@ export function ClosetBoard({
           : null;
 
   const filtered = useMemo(() => {
-    let list =
-      filter === "all" ? items : filter === "needs_review" ? needsReview : byZone[filter];
+    let list: WardrobeItem[];
+    if (filter === "all") list = items;
+    else if (filter === "in_wash") list = inWash;
+    else if (filter === "needs_review") list = needsReview;
+    else list = byZone[filter];
+
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter((it) =>
@@ -79,9 +89,8 @@ export function ClosetBoard({
       );
     }
     return list;
-  }, [filter, query, items, needsReview, byZone]);
+  }, [filter, query, items, inWash, needsReview, byZone]);
 
-  // ---- Empty state ----
   if (items.length === 0) return <EmptyState />;
 
   const filters: { key: FilterKey; label: string; count: number }[] = [
@@ -91,6 +100,7 @@ export function ClosetBoard({
     { key: "occasion", label: "Occasion", count: byZone.occasion.length },
     { key: "shoes", label: "Shoes", count: byZone.shoes.length },
     { key: "accessories", label: "Accessories", count: byZone.accessories.length },
+    { key: "in_wash", label: "In wash", count: inWash.length },
     { key: "needs_review", label: "Needs review", count: needsReview.length },
   ];
 
@@ -113,6 +123,11 @@ export function ClosetBoard({
             : <>{items.length} {items.length === 1 ? "piece" : "pieces"} across {zonesRepresented} {zonesRepresented === 1 ? "zone" : "zones"}.</>}
         </p>
         {healthSuggestion && <p className="mt-1 text-sm text-graphite">{healthSuggestion}</p>}
+        {inWash.length > 0 && (
+          <p className="mt-1 text-sm text-graphite">
+            {inWash.length} {inWash.length === 1 ? "item is" : "items are"} in the wash and excluded from today&apos;s suggestions.
+          </p>
+        )}
 
         <div className="mt-3 flex flex-wrap gap-4 border-t border-stone pt-3">
           <Stat value={items.length} label="items" />
@@ -132,9 +147,15 @@ export function ClosetBoard({
         <ShoeZone items={byZone.shoes} urls={urls} />
         <ZoneDivider />
         <TrayZone items={byZone.accessories} urls={urls} />
+        {inWash.length > 0 && (
+          <>
+            <ZoneDivider />
+            <LaundryZone items={inWash} urls={urls} />
+          </>
+        )}
       </section>
 
-      {/* Quick filters — wrap so nothing clips on mobile */}
+      {/* Quick filters */}
       <div className="flex flex-wrap gap-2 pt-1">
         {filters.map((f) => (
           <button key={f.key} type="button" onClick={() => setFilter(f.key)} aria-pressed={filter === f.key}>
@@ -408,6 +429,28 @@ function TrayZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
   );
 }
 
+function LaundryZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
+  const shown = items.slice(0, 8);
+  return (
+    <div>
+      <div className="mb-3">
+        <p className="ww-eyebrow text-plum">Laundry / In Wash</p>
+        <p className="text-xs text-graphite">In wash · excluded from today&apos;s suggestions.</p>
+      </div>
+      <div className="rounded-ww-md border border-stone bg-stone/30 p-3">
+        <div className="no-scrollbar flex gap-3 overflow-x-auto pr-4">
+          {shown.map((item) => (
+            <Link key={item.id} href={`/wardrobe/${item.id}`} className="flex w-[64px] shrink-0 flex-col items-center">
+              <MiniTile item={item} url={urls[item.image_path]} size={64} className="opacity-70" />
+              <span className="mt-1 w-full truncate text-center text-[10px] text-graphite">{itemName(item)}</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ===================== Grid card =====================
 
 const BADGE_TONE: Record<"champagne" | "plum" | "sage", string> = {
@@ -416,45 +459,99 @@ const BADGE_TONE: Record<"champagne" | "plum" | "sage", string> = {
   sage: "bg-sage/90 text-charcoal",
 };
 
+const AVAIL_TONE: Record<"wash" | "unavailable", string> = {
+  wash: "bg-sage/25 text-[#5d7351]",
+  unavailable: "bg-stone text-graphite",
+};
+
 function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
   const occ = (item.occasion_tags ?? []).slice(0, 2) as Occasion[];
-  const badge = itemBadge(item);
+  const avail = availabilityBadge(item);
+  const stateBadge = itemBadge(item);
   const worn = lastWornLabel(item);
+  const status = statusOf(item);
+
+  async function setAvailability(next: AvailabilityStatus) {
+    setBusy(true);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setBusy(false); return; }
+    // Owner-scoped update; RLS also enforces ownership.
+    await supabase
+      .from("wardrobe_items")
+      .update({ availability_status: next })
+      .eq("id", item.id)
+      .eq("user_id", user.id);
+    setBusy(false);
+    router.refresh();
+  }
 
   return (
-    <Link href={`/wardrobe/${item.id}`} className="group overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-sm">
-      <div className="relative aspect-[4/5] bg-stone">
-        {url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={url}
-            alt={itemName(item)}
-            className="h-full w-full object-cover transition-transform group-active:scale-[0.98]"
-          />
+    <div className={cn("overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-sm", status !== "available" && "opacity-95")}>
+      <Link href={`/wardrobe/${item.id}`} className="group block">
+        <div className="relative aspect-[4/5] bg-stone">
+          {url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={url}
+              alt={itemName(item)}
+              className={cn("h-full w-full object-cover transition-transform group-active:scale-[0.98]", status === "in_wash" && "opacity-80")}
+            />
+          ) : (
+            <GarmentTile fill kind={garmentKindForItem(item)} color={colorToHex(item.color)} rounded="rounded-none" className="border-0" />
+          )}
+          {avail ? (
+            <span className={cn("absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-medium", AVAIL_TONE[avail.tone])}>
+              {avail.label}
+            </span>
+          ) : stateBadge ? (
+            <span className={cn("absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-medium", BADGE_TONE[stateBadge.tone])}>
+              {stateBadge.label}
+            </span>
+          ) : null}
+        </div>
+        <div className="px-2.5 pt-2.5">
+          <p className="truncate text-sm font-medium text-charcoal">{itemName(item)}</p>
+          <p className="truncate text-xs text-graphite">
+            {[item.category, item.color].filter(Boolean).join(" · ") || "Untagged"}
+          </p>
+          {occ.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {occ.map((o) => (
+                <Chip key={o} size="sm" className="text-graphite">{occasionLabel(o)}</Chip>
+              ))}
+            </div>
+          )}
+          {worn && <p className="mt-1 text-[11px] text-mist">{worn}</p>}
+        </div>
+      </Link>
+
+      {/* Availability action */}
+      <div className="px-2.5 pb-2.5 pt-2">
+        {status === "available" ? (
+          <button
+            type="button"
+            onClick={() => setAvailability("in_wash")}
+            disabled={busy}
+            className="min-h-[40px] w-full rounded-ww-sm border border-hairline bg-ivory/60 text-xs font-medium text-graphite transition-colors hover:bg-stone/40 disabled:opacity-60"
+          >
+            {busy ? "…" : "Mark in wash"}
+          </button>
         ) : (
-          <GarmentTile fill kind={garmentKindForItem(item)} color={colorToHex(item.color)} rounded="rounded-none" className="border-0" />
-        )}
-        {badge && (
-          <span className={cn("absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-medium", BADGE_TONE[badge.tone])}>
-            {badge.label}
-          </span>
+          <button
+            type="button"
+            onClick={() => setAvailability("available")}
+            disabled={busy}
+            className="min-h-[40px] w-full rounded-ww-sm border border-sage/40 bg-sage/10 text-xs font-medium text-[#5d7351] transition-colors hover:bg-sage/20 disabled:opacity-60"
+          >
+            {busy ? "…" : "Mark available"}
+          </button>
         )}
       </div>
-      <div className="p-2.5">
-        <p className="truncate text-sm font-medium text-charcoal">{itemName(item)}</p>
-        <p className="truncate text-xs text-graphite">
-          {[item.category, item.color].filter(Boolean).join(" · ") || "Untagged"}
-        </p>
-        {occ.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            {occ.map((o) => (
-              <Chip key={o} size="sm" className="text-graphite">{occasionLabel(o)}</Chip>
-            ))}
-          </div>
-        )}
-        {worn && <p className="mt-1 text-[11px] text-mist">{worn}</p>}
-      </div>
-    </Link>
+    </div>
   );
 }
 
@@ -470,7 +567,6 @@ function EmptyState() {
         </div>
       </div>
 
-      {/* Soft empty Closet Board illustration */}
       <div className="mt-5 space-y-4 rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm" aria-hidden="true">
         <div>
           <p className="ww-eyebrow text-plum">Hanging Rail</p>

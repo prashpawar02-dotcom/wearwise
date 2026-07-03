@@ -55,10 +55,12 @@ const STYLE_OCCASIONS: StyleOccasion[] = [
 
 export function OccasionForm({
   itemCount,
+  wearableCount,
   ready,
   weather,
 }: {
   itemCount: number;
+  wearableCount: number;
   ready: WardrobeReady;
   weather: WeatherContext | null;
 }) {
@@ -123,6 +125,14 @@ export function OccasionForm({
 
   return (
     <div className="space-y-6">
+      {/* Honest note when in-wash/unavailable items leave too few usable pieces */}
+      {wearableCount < MIN_ITEMS && (
+        <div className="flex items-start gap-2 rounded-ww-md border border-champagne/30 bg-champagne/[0.12] p-3 text-sm text-[#8a6a3e]">
+          <Icon.Sparkle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>A few items are unavailable. Mark clothes available or add more items to get better outfits.</span>
+        </div>
+      )}
+
       {/* Occasion cards */}
       <div className="space-y-3">
         <Label>What are you dressing for?</Label>
