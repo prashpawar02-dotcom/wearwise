@@ -22,12 +22,19 @@ import {
   type Zone,
 } from "@/lib/wardrobe";
 
-type FilterKey = "all" | Zone | "in_wash" | "needs_review";
+type FilterKey = "all" | "available" | "laundry" | Zone;
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
 const itemName = (it: WardrobeItem) => it.user_facing_name ?? it.category ?? "Untagged item";
 const statusOf = (it: WardrobeItem): AvailabilityStatus =>
   (it.availability_status ?? "available") as AvailabilityStatus;
+
+interface ZoneBuckets {
+  all: WardrobeItem[];
+  available: WardrobeItem[];
+  inWash: number;
+  unavailable: number;
+}
 
 export function ClosetBoard({
   items,
@@ -40,43 +47,55 @@ export function ClosetBoard({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  const wearable = useMemo(() => items.filter((i) => statusOf(i) === "available"), [items]);
   const inWash = useMemo(() => items.filter((i) => statusOf(i) === "in_wash"), [items]);
+  const notAvailable = useMemo(() => items.filter((i) => statusOf(i) !== "available"), [items]);
+  const unavailableCount = notAvailable.length - inWash.length;
+  const needsReview = useMemo(() => items.filter((i) => i.ai_tag_status === "needs_review"), [items]);
 
-  // Category zones show everything except items set aside in the wash.
-  const byZone = useMemo(() => {
-    const m: Record<Zone, WardrobeItem[]> = { hanging: [], folded: [], occasion: [], shoes: [], accessories: [] };
+  // Per-zone buckets (available items feed the board; all items feed filters/counts).
+  const zones = useMemo(() => {
+    const empty = (): ZoneBuckets => ({ all: [], available: [], inWash: 0, unavailable: 0 });
+    const m: Record<Zone, ZoneBuckets> = {
+      hanging: empty(), folded: empty(), occasion: empty(), shoes: empty(), accessories: empty(),
+    };
     for (const it of items) {
-      if (statusOf(it) === "in_wash") continue;
-      m[zoneForItem(it)].push(it);
+      const z = zoneForItem(it);
+      const s = statusOf(it);
+      m[z].all.push(it);
+      if (s === "available") m[z].available.push(it);
+      else if (s === "in_wash") m[z].inWash += 1;
+      else m[z].unavailable += 1;
     }
     return m;
   }, [items]);
 
-  const needsReview = useMemo(() => items.filter((i) => i.ai_tag_status === "needs_review"), [items]);
-  const zonesRepresented = ZONE_ORDER.filter((z) => byZone[z].length > 0).length;
+  const zonesRepresented = ZONE_ORDER.filter((z) => zones[z].available.length > 0).length;
 
+  // Closet health — computed from AVAILABLE items only, so copy isn't misleading.
   const strongestOccasion = useMemo(() => {
+    if (wearable.length < 6) return null;
     const counts: Record<string, number> = {};
-    for (const it of items) for (const o of it.occasion_tags ?? []) counts[o] = (counts[o] ?? 0) + 1;
+    for (const it of wearable) for (const o of it.occasion_tags ?? []) counts[o] = (counts[o] ?? 0) + 1;
     const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
     return top ? occasionLabel(top[0]) : null;
-  }, [items]);
+  }, [wearable]);
 
   const healthSuggestion =
-    byZone.shoes.length < 2
-      ? "Add a pair of shoes to complete more outfits."
-      : byZone.hanging.length < 3
-        ? "Add a few tops or shirts to expand your looks."
-        : byZone.accessories.length < 1
-          ? "Add 1 accessory to unlock more complete looks."
+    zones.shoes.available.length < 1
+      ? "Add one pair of shoes to unlock better outfits."
+      : wearable.length < 6
+        ? "Add a few more everyday pieces to improve recommendations."
+        : zones.accessories.available.length < 1
+          ? "Add one accessory to complete more looks."
           : null;
 
   const filtered = useMemo(() => {
     let list: WardrobeItem[];
     if (filter === "all") list = items;
-    else if (filter === "in_wash") list = inWash;
-    else if (filter === "needs_review") list = needsReview;
-    else list = byZone[filter];
+    else if (filter === "available") list = wearable;
+    else if (filter === "laundry") list = notAvailable;
+    else list = zones[filter].all;
 
     const q = query.trim().toLowerCase();
     if (q) {
@@ -89,19 +108,19 @@ export function ClosetBoard({
       );
     }
     return list;
-  }, [filter, query, items, inWash, needsReview, byZone]);
+  }, [filter, query, items, wearable, notAvailable, zones]);
 
   if (items.length === 0) return <EmptyState />;
 
   const filters: { key: FilterKey; label: string; count: number }[] = [
     { key: "all", label: "All", count: items.length },
-    { key: "hanging", label: "Hanging", count: byZone.hanging.length },
-    { key: "folded", label: "Folded", count: byZone.folded.length },
-    { key: "occasion", label: "Occasion", count: byZone.occasion.length },
-    { key: "shoes", label: "Shoes", count: byZone.shoes.length },
-    { key: "accessories", label: "Accessories", count: byZone.accessories.length },
-    { key: "in_wash", label: "In wash", count: inWash.length },
-    { key: "needs_review", label: "Needs review", count: needsReview.length },
+    { key: "available", label: "Available", count: wearable.length },
+    { key: "laundry", label: "Laundry", count: notAvailable.length },
+    { key: "hanging", label: "Hanging", count: zones.hanging.all.length },
+    { key: "folded", label: "Folded", count: zones.folded.all.length },
+    { key: "occasion", label: "Occasion", count: zones.occasion.all.length },
+    { key: "shoes", label: "Shoes", count: zones.shoes.all.length },
+    { key: "accessories", label: "Accessories", count: zones.accessories.all.length },
   ];
 
   return (
@@ -120,39 +139,61 @@ export function ClosetBoard({
         <p className="mt-1.5 font-serif text-lg leading-snug text-charcoal">
           {strongestOccasion
             ? <>Your closet is strongest for <em className="text-plum">{strongestOccasion.toLowerCase()}</em> outfits.</>
-            : <>{items.length} {items.length === 1 ? "piece" : "pieces"} across {zonesRepresented} {zonesRepresented === 1 ? "zone" : "zones"}.</>}
+            : <>{wearable.length} {wearable.length === 1 ? "piece is" : "pieces are"} ready across {zonesRepresented} {zonesRepresented === 1 ? "zone" : "zones"}.</>}
         </p>
         {healthSuggestion && <p className="mt-1 text-sm text-graphite">{healthSuggestion}</p>}
-        {inWash.length > 0 && (
-          <p className="mt-1 text-sm text-graphite">
-            {inWash.length} {inWash.length === 1 ? "item is" : "items are"} in the wash and excluded from today&apos;s suggestions.
-          </p>
-        )}
 
         <div className="mt-3 flex flex-wrap gap-4 border-t border-stone pt-3">
-          <Stat value={items.length} label="items" />
-          <Stat value={zonesRepresented} label="outfit-ready zones" />
+          <Stat value={wearable.length} label="available" />
+          <Stat value={zonesRepresented} label="ready zones" />
           {needsReview.length > 0 && <Stat value={needsReview.length} label="need review" tone="champagne" />}
         </div>
       </section>
 
+      {/* Availability summary strip — explains why some zones look thin */}
+      {notAvailable.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setFilter("laundry")}
+          className="flex w-full items-center gap-3 rounded-ww-md border border-hairline bg-bone p-3 text-left shadow-ww-xs transition-colors hover:border-hairline-strong"
+        >
+          <span className="flex -space-x-2">
+            {notAvailable.slice(0, 3).map((it) => (
+              <span key={it.id} className="h-9 w-9 overflow-hidden rounded-full border-2 border-bone bg-stone">
+                {urls[it.image_path] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={urls[it.image_path]} alt="" className="h-full w-full object-cover opacity-80" />
+                ) : (
+                  <GarmentTile fill kind={garmentKindForItem(it)} color={colorToHex(it.color)} rounded="rounded-none" className="border-0" />
+                )}
+              </span>
+            ))}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-charcoal">
+              {[inWash.length > 0 ? `${inWash.length} in wash` : null, unavailableCount > 0 ? `${unavailableCount} unavailable` : null]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+            <span className="block text-xs text-graphite">Excluded from today&apos;s suggestions.</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-plum">
+            View laundry <Icon.ArrowRight className="h-3.5 w-3.5" />
+          </span>
+        </button>
+      )}
+
       {/* Closet Board hero */}
       <section className="overflow-hidden rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm">
-        <RailZone items={byZone.hanging} urls={urls} />
+        <RailZone buckets={zones.hanging} urls={urls} />
         <ZoneDivider />
-        <ShelfZone items={byZone.folded} urls={urls} />
+        <ShelfZone buckets={zones.folded} urls={urls} />
         <ZoneDivider />
-        <OccasionZone items={byZone.occasion} urls={urls} />
+        <OccasionZone buckets={zones.occasion} urls={urls} />
         <ZoneDivider />
-        <ShoeZone items={byZone.shoes} urls={urls} />
+        <ShoeZone buckets={zones.shoes} urls={urls} />
         <ZoneDivider />
-        <TrayZone items={byZone.accessories} urls={urls} />
-        {inWash.length > 0 && (
-          <>
-            <ZoneDivider />
-            <LaundryZone items={inWash} urls={urls} />
-          </>
-        )}
+        <TrayZone buckets={zones.accessories} urls={urls} />
       </section>
 
       {/* Quick filters */}
@@ -256,16 +297,47 @@ function ZoneDivider() {
   return <div className="my-5 h-px bg-mist/40" aria-hidden="true" />;
 }
 
-function ZoneHead({ zone, action }: { zone: Zone; action?: React.ReactNode }) {
+function ZoneHeader({
+  zone,
+  buckets,
+  action,
+}: {
+  zone: Zone;
+  buckets: ZoneBuckets;
+  action?: React.ReactNode;
+}) {
+  const meta = [
+    `${buckets.available.length} available`,
+    buckets.inWash > 0 ? `${buckets.inWash} in wash` : null,
+    buckets.unavailable > 0 ? `${buckets.unavailable} unavailable` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <div className="mb-3 flex items-baseline justify-between gap-2">
       <div>
         <p className="ww-eyebrow text-plum">{ZONE_META[zone].title}</p>
         <p className="text-xs text-graphite">{ZONE_META[zone].subtitle}</p>
       </div>
-      {action}
+      <div className="flex items-center gap-2">
+        <span className="whitespace-nowrap text-[11px] text-mist">{meta}</span>
+        {action}
+      </div>
     </div>
   );
+}
+
+/** Body shown when a zone has no AVAILABLE items: ghost note (has hidden items) or a quiet empty line. */
+function ZonePlaceholder({ buckets, emptyText }: { buckets: ZoneBuckets; emptyText: string }) {
+  const hidden = buckets.inWash + buckets.unavailable;
+  if (hidden > 0) {
+    return (
+      <p className="rounded-ww-md border border-dashed border-hairline bg-stone/20 px-3 py-2.5 text-xs text-graphite">
+        Currently set aside · {hidden} {hidden === 1 ? "item is" : "items are"} hidden from today&apos;s suggestions.
+      </p>
+    );
+  }
+  return <p className="py-1.5 text-xs text-mist">{emptyText}</p>;
 }
 
 function MiniTile({
@@ -293,23 +365,17 @@ function MiniTile({
     );
   }
   return (
-    <GarmentTile
-      kind={garmentKindForItem(item)}
-      color={colorToHex(item.color)}
-      size={size}
-      rounded={rounded}
-      className={className}
-    />
+    <GarmentTile kind={garmentKindForItem(item)} color={colorToHex(item.color)} size={size} rounded={rounded} className={className} />
   );
 }
 
-function RailZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
-  const shown = items.slice(0, 5);
+function RailZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+  const shown = buckets.available.slice(0, 5);
   return (
     <div>
-      <ZoneHead zone="hanging" />
+      <ZoneHeader zone="hanging" buckets={buckets} />
       {shown.length === 0 ? (
-        <p className="py-2 text-xs text-mist">No hanging pieces yet.</p>
+        <ZonePlaceholder buckets={buckets} emptyText="No hanging pieces yet." />
       ) : (
         <div className="relative pt-3.5">
           <div className="absolute left-0 right-0 top-0 h-[3px] rounded-full bg-mist/60" aria-hidden="true" />
@@ -328,13 +394,13 @@ function RailZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
   );
 }
 
-function ShelfZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
-  const shown = items.slice(0, 5);
+function ShelfZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+  const shown = buckets.available.slice(0, 5);
   return (
     <div>
-      <ZoneHead zone="folded" />
+      <ZoneHeader zone="folded" buckets={buckets} />
       {shown.length === 0 ? (
-        <p className="py-2 text-xs text-mist">Nothing folded yet.</p>
+        <ZonePlaceholder buckets={buckets} emptyText="Nothing folded yet." />
       ) : (
         <div className="rounded-ww-sm border-b-2 border-stone">
           <div className="no-scrollbar flex gap-3 overflow-x-auto px-0.5 pb-2 pr-4">
@@ -350,13 +416,13 @@ function ShelfZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string
   );
 }
 
-function OccasionZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
-  const shown = items.slice(0, 6);
+function OccasionZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+  const shown = buckets.available.slice(0, 6);
   return (
     <div>
-      <ZoneHead zone="occasion" />
+      <ZoneHeader zone="occasion" buckets={buckets} />
       {shown.length === 0 ? (
-        <p className="py-2 text-xs text-mist">No festive, ethnic or formal pieces yet.</p>
+        <ZonePlaceholder buckets={buckets} emptyText="No festive, ethnic or formal pieces yet." />
       ) : (
         <div className="rounded-ww-md border border-champagne/25 bg-champagne/[0.06] p-3">
           <div className="no-scrollbar flex gap-3 overflow-x-auto pr-4">
@@ -373,13 +439,13 @@ function OccasionZone({ items, urls }: { items: WardrobeItem[]; urls: Record<str
   );
 }
 
-function ShoeZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
-  const shown = items.slice(0, 4);
+function ShoeZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+  const shown = buckets.available.slice(0, 4);
   return (
     <div>
-      <ZoneHead zone="shoes" />
+      <ZoneHeader zone="shoes" buckets={buckets} />
       {shown.length === 0 ? (
-        <p className="py-2 text-xs text-mist">No shoes yet.</p>
+        <ZonePlaceholder buckets={buckets} emptyText="No shoes yet. Add shoes to complete more outfits." />
       ) : (
         <div className="flex gap-3 border-b-2 border-stone pb-3 pr-4">
           {shown.map((item) => (
@@ -393,27 +459,30 @@ function ShoeZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
   );
 }
 
-function TrayZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
-  const shown = items.slice(0, 6);
+function TrayZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+  const shown = buckets.available.slice(0, 6);
+  const trulyEmpty = buckets.all.length === 0;
   return (
     <div>
-      <ZoneHead
+      <ZoneHeader
         zone="accessories"
+        buckets={buckets}
         action={
           <Link href="/wardrobe/upload" className="shrink-0 text-xs font-medium text-plum hover:underline">
-            Add accessory
+            Add
           </Link>
         }
       />
       {shown.length === 0 ? (
-        <div className="rounded-ww-md border border-dashed border-hairline-strong bg-stone/30 p-3">
-          <p className="text-xs text-graphite">
-            No accessories yet. Add a belt, watch, bag, dupatta, or jewelry to complete more looks.
-          </p>
-          <Button asChild size="sm" variant="secondary" className="mt-2.5">
-            <Link href="/wardrobe/upload"><Icon.Plus className="h-3.5 w-3.5" /> Add accessory</Link>
-          </Button>
-        </div>
+        trulyEmpty ? (
+          <div className="rounded-ww-md border border-dashed border-hairline-strong bg-stone/20 p-3">
+            <p className="text-xs text-graphite">
+              No accessories yet. A belt, watch, bag, dupatta or jewelry completes more looks.
+            </p>
+          </div>
+        ) : (
+          <ZonePlaceholder buckets={buckets} emptyText="No accessories yet." />
+        )
       ) : (
         <div className="rounded-ww-md border border-hairline bg-stone/40 p-3">
           <div className="flex flex-wrap gap-2.5">
@@ -425,28 +494,6 @@ function TrayZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function LaundryZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
-  const shown = items.slice(0, 8);
-  return (
-    <div>
-      <div className="mb-3">
-        <p className="ww-eyebrow text-plum">Laundry / In Wash</p>
-        <p className="text-xs text-graphite">In wash · excluded from today&apos;s suggestions.</p>
-      </div>
-      <div className="rounded-ww-md border border-stone bg-stone/30 p-3">
-        <div className="no-scrollbar flex gap-3 overflow-x-auto pr-4">
-          {shown.map((item) => (
-            <Link key={item.id} href={`/wardrobe/${item.id}`} className="flex w-[64px] shrink-0 flex-col items-center">
-              <MiniTile item={item} url={urls[item.image_path]} size={64} className="opacity-70" />
-              <span className="mt-1 w-full truncate text-center text-[10px] text-graphite">{itemName(item)}</span>
-            </Link>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -479,7 +526,6 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setBusy(false); return; }
-    // Owner-scoped update; RLS also enforces ownership.
     await supabase
       .from("wardrobe_items")
       .update({ availability_status: next })
@@ -492,16 +538,17 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
   return (
     <div className={cn("overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-sm", status !== "available" && "opacity-95")}>
       <Link href={`/wardrobe/${item.id}`} className="group block">
-        <div className="relative aspect-[4/5] bg-stone">
+        {/* Item tile — the garment sits centred on a warm surface (not a cropped catalog card). */}
+        <div className="relative aspect-square bg-stone/60 p-2">
           {url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={url}
               alt={itemName(item)}
-              className={cn("h-full w-full object-cover transition-transform group-active:scale-[0.98]", status === "in_wash" && "opacity-80")}
+              className={cn("h-full w-full rounded-ww-xs object-contain transition-transform group-active:scale-[0.98]", status === "in_wash" && "opacity-70")}
             />
           ) : (
-            <GarmentTile fill kind={garmentKindForItem(item)} color={colorToHex(item.color)} rounded="rounded-none" className="border-0" />
+            <GarmentTile fill kind={garmentKindForItem(item)} color={colorToHex(item.color)} rounded="rounded-ww-xs" className="border-0" />
           )}
           {avail ? (
             <span className={cn("absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-medium", AVAIL_TONE[avail.tone])}>
@@ -529,27 +576,22 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
         </div>
       </Link>
 
-      {/* Availability action */}
-      <div className="px-2.5 pb-2.5 pt-2">
-        {status === "available" ? (
-          <button
-            type="button"
-            onClick={() => setAvailability("in_wash")}
-            disabled={busy}
-            className="min-h-[40px] w-full rounded-ww-sm border border-hairline bg-ivory/60 text-xs font-medium text-graphite transition-colors hover:bg-stone/40 disabled:opacity-60"
-          >
-            {busy ? "…" : "Mark in wash"}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setAvailability("available")}
-            disabled={busy}
-            className="min-h-[40px] w-full rounded-ww-sm border border-sage/40 bg-sage/10 text-xs font-medium text-[#5d7351] transition-colors hover:bg-sage/20 disabled:opacity-60"
-          >
-            {busy ? "…" : "Mark available"}
-          </button>
-        )}
+      {/* Compact availability action */}
+      <div className="flex items-center justify-end px-2.5 pb-2.5 pt-2">
+        <button
+          type="button"
+          onClick={() => setAvailability(status === "available" ? "in_wash" : "available")}
+          disabled={busy}
+          aria-label={status === "available" ? "Mark in wash" : "Mark available"}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50",
+            status === "available"
+              ? "border-hairline text-graphite hover:bg-stone/40"
+              : "border-sage/40 bg-sage/10 text-[#5d7351] hover:bg-sage/20"
+          )}
+        >
+          {busy ? "…" : status === "available" ? "Mark in wash" : "Mark available"}
+        </button>
       </div>
     </div>
   );

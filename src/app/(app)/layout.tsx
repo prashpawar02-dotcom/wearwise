@@ -6,7 +6,7 @@
  */
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-[480px] bg-background">
+    <div className="mx-auto min-h-dvh w-full max-w-[440px] bg-background shadow-[0_0_60px_-30px_rgba(28,26,23,0.18)]">
       {children}
     </div>
   );
