@@ -14,6 +14,7 @@ import type { OutfitItem } from "@/components/wearwise/OutfitItemRow";
 import type { GarmentKind } from "@/components/ui/Icon";
 import { OCCASIONS, type OutfitSuggestion, type WardrobeItem } from "@/lib/types";
 import { WornTodayButton } from "@/app/(app)/outfits/[requestId]/worn-today-button";
+import { getWeatherContext, type WeatherContext } from "@/lib/weather";
 
 export const dynamic = "force-dynamic"; // per-user signed URLs; never cache
 
@@ -82,6 +83,9 @@ export default async function DashboardPage() {
     itemsCount: items,
   });
 
+  // Honest weather context (null when no API key or no city).
+  const weather = await getWeatherContext(profile?.city);
+
   return (
     <main className="min-h-dvh pb-28">
       <div className="animate-fade-in px-6 pt-10">
@@ -108,6 +112,9 @@ export default async function DashboardPage() {
               ? "Create a look and your daily picks will appear here."
               : "Let's set up your wardrobe so your daily picks can begin."}
         </p>
+
+        {/* Real weather context (honest fallback when unavailable) */}
+        <WeatherStrip weather={weather} />
 
         {/* Context chips */}
         <div className="no-scrollbar -mx-6 mt-4 flex gap-2 overflow-x-auto px-6">
@@ -488,6 +495,26 @@ function buildDailyInsight({
   }
   if (itemsCount > 0) return "Fresh pick. WearWise learns more each time you mark an outfit worn.";
   return "Add a few clothes and WearWise will start preparing your daily pick.";
+}
+
+function WeatherStrip({ weather }: { weather: WeatherContext | null }) {
+  const rainy = weather?.category === "rainy" || weather?.category === "humid" || weather?.category === "windy";
+  const WIcon = rainy ? Icon.Cloud : Icon.Sun;
+  return (
+    <div className="mt-3 flex items-center gap-2 rounded-ww-md border border-hairline bg-bone px-3 py-2 text-sm">
+      <WIcon className={`h-4 w-4 shrink-0 ${weather ? "text-champagne" : "text-mist"}`} />
+      {weather ? (
+        <span className="min-w-0">
+          <span className="font-medium text-charcoal">{weather.tempC}° · {weather.summary}</span>
+          <span className="text-graphite"> — {weather.advice}</span>
+        </span>
+      ) : (
+        <span className="text-graphite">
+          Weather unavailable — WearWise will use your wardrobe and selected occasion.
+        </span>
+      )}
+    </div>
+  );
 }
 
 function DailyInsight({ text }: { text: string }) {

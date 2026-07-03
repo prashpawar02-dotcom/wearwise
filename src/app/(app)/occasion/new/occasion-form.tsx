@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Icon, type IconProps } from "@/components/ui/Icon";
 import type { Occasion } from "@/lib/types";
+import type { WeatherContext } from "@/lib/weather";
 import { cn } from "@/lib/utils";
 
 // Minimum wardrobe items before outfit generation is useful (matches the
@@ -52,7 +53,15 @@ const STYLE_OCCASIONS: StyleOccasion[] = [
   { key: "formal_event", label: "Formal event", desc: "Dressier. A clear step up.", occasion: "party", icon: Icon.Sparkle, tag: "Formal event" },
 ];
 
-export function OccasionForm({ itemCount, ready }: { itemCount: number; ready: WardrobeReady }) {
+export function OccasionForm({
+  itemCount,
+  ready,
+  weather,
+}: {
+  itemCount: number;
+  ready: WardrobeReady;
+  weather: WeatherContext | null;
+}) {
   const router = useRouter();
   const [selectedKey, setSelectedKey] = useState<string>("");
   const [notes, setNotes] = useState("");
@@ -169,12 +178,20 @@ export function OccasionForm({ itemCount, ready }: { itemCount: number; ready: W
         />
       </div>
 
-      {/* Honest context strip — no fake weather */}
-      <div className="rounded-ww-md border border-hairline bg-bone p-3 text-sm text-graphite">
-        {readyList.length > 0 ? (
-          <>Wardrobe ready: <span className="text-charcoal">{readyList.join(", ")}</span>. WearWise will use these and your chosen occasion.</>
+      {/* Context strip — real weather when available, honest fallback otherwise */}
+      <div className="space-y-1.5 rounded-ww-md border border-hairline bg-bone p-3 text-sm">
+        {weather ? (
+          <p className="text-charcoal">
+            <span className="font-medium">Today: {weather.tempC}° · {weather.summary}</span>{" "}
+            <span className="text-graphite">— {weather.advice}</span>
+          </p>
         ) : (
-          <>Using your wardrobe and selected occasion.</>
+          <p className="text-graphite">Using your wardrobe and selected occasion.</p>
+        )}
+        {readyList.length > 0 && (
+          <p className="text-graphite">
+            Wardrobe ready: <span className="text-charcoal">{readyList.join(", ")}</span>.
+          </p>
         )}
       </div>
 
