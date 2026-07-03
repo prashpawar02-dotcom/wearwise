@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WearWise — Design Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ivory:#FAF7F2; --charcoal:#2B2B2B; --rose:#C48B9F; --rose-soft:#F3E3E9;
+    --plum:#6B4E5B; --sage:#A8B5A0; --sage-soft:#E9EEE6; --line:#EAE3D8;
+    --shadow:0 8px 30px rgba(43,43,43,.10);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#EFEAE2;font-family:'Inter',system-ui,sans-serif;color:var(--charcoal);padding:48px 24px}
+  .intro{max-width:1200px;margin:0 auto 40px}
+  .intro h1{font-family:'Instrument Serif',serif;font-size:44px;font-weight:400}
+  .intro p{color:var(--plum);margin-top:6px;font-size:15px}
+  .stage{display:flex;gap:36px;flex-wrap:wrap;justify-content:center;max-width:1400px;margin:0 auto}
+  .col{display:flex;flex-direction:column;align-items:center;gap:14px}
+  .label{font-size:13px;font-weight:600;color:var(--plum);letter-spacing:.06em;text-transform:uppercase}
+  .phone{width:300px;height:620px;background:var(--ivory);border-radius:36px;border:8px solid var(--charcoal);
+    box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .screen{flex:1;overflow:hidden;padding:18px 16px 0;display:flex;flex-direction:column;gap:12px}
+  .status{display:flex;justify-content:space-between;font-size:10px;color:#9a938a;padding:2px 4px 0}
+  .greet .hi{font-family:'Instrument Serif',serif;font-size:24px}
+  .greet .sub{font-size:11.5px;color:var(--plum);margin-top:2px}
+  .weather{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
+    border-radius:14px;padding:8px 12px;font-size:11.5px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:10.5px;padding:5px 11px;border-radius:20px;border:1px solid var(--line);background:#fff;color:var(--charcoal)}
+  .chip.on{background:var(--rose);color:#fff;border-color:var(--rose);font-weight:600}
+  .ocard{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px;box-shadow:0 2px 12px rgba(43,43,43,.05)}
+  .ocard .best{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.08em;color:#fff;
+    background:var(--sage);padding:3px 8px;border-radius:10px;margin-bottom:8px}
+  .flat{display:flex;gap:8px;margin-bottom:10px}
+  .item{flex:1;height:74px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:26px}
+  .i1{background:linear-gradient(135deg,#F3E3E9,#e5c8d4)} .i2{background:linear-gradient(135deg,#E9EEE6,#cfd9c8)}
+  .i3{background:linear-gradient(135deg,#F0E6D6,#e2d2b8)} .i4{background:linear-gradient(135deg,#E4DCE8,#cfc2d6)}
+  .oname{font-family:'Instrument Serif',serif;font-size:18px}
+  .owhy{font-size:11px;color:#7d7468;margin-top:3px}
+  .acts{display:flex;gap:8px;margin-top:11px}
+  .btn{flex:1;text-align:center;font-size:11.5px;font-weight:600;padding:9px 0;border-radius:12px}
+  .btn.pri{background:var(--rose);color:#fff} .btn.sec{background:#fff;border:1px solid var(--line)}
+  .nav{display:flex;justify-content:space-around;align-items:center;background:#fff;border-top:1px solid var(--line);
+    padding:9px 6px 13px;font-size:9px;color:#9a938a;position:relative}
+  .nav div{display:flex;flex-direction:column;align-items:center;gap:2px;width:52px}
+  .nav .ic{font-size:17px} .nav .active{color:var(--plum);font-weight:700}
+  .fab{position:absolute;top:-24px;left:50%;transform:translateX(-50%);width:52px;height:52px;border-radius:50%;
+    background:var(--plum);color:#fff;display:flex;align-items:center;justify-content:center;font-size:21px;
+    box-shadow:0 6px 16px rgba(107,78,91,.45);border:3px solid var(--ivory)}
+  .sect{font-size:12px;font-weight:700}
+  .wgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .witem{background:#fff;border:1px solid var(--line);border-radius:13px;padding:6px;text-align:center}
+  .wimg{height:56px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:22px}
+  .wmeta{font-size:8.5px;color:#9a938a;margin-top:4px}
+  .gems{background:var(--rose-soft);border-radius:14px;padding:10px 12px;font-size:11px}
+  .gems b{color:var(--plum)}
+  .prem{background:#fff;border:2px solid var(--rose);border-radius:18px;padding:14px;position:relative}
+  .prem.basic{border-color:var(--line)}
+  .tag{position:absolute;top:-9px;right:12px;background:var(--rose);color:#fff;font-size:8.5px;font-weight:700;
+    padding:3px 9px;border-radius:9px;letter-spacing:.05em}
+  .price{font-family:'Instrument Serif',serif;font-size:24px}
+  .price span{font-size:11px;font-family:'Inter';color:#9a938a}
+  .feat{font-size:10.5px;color:#6d6459;margin-top:6px;line-height:1.7}
+  .pack{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid var(--line);
+    border-radius:14px;padding:10px 12px;font-size:11px}
+  .pack b{display:block;font-size:12px} .pack .pp{font-weight:700;color:var(--plum)}
+  .share{background:linear-gradient(160deg,#6B4E5B,#54394a);border-radius:18px;padding:16px;color:#fff}
+  .share .oname{color:#fff} .share .owhy{color:#d9c8d1}
+  .share .wm{font-family:'Instrument Serif',serif;font-size:12px;letter-spacing:.04em;opacity:.85;margin-top:10px}
+  .vote{display:flex;gap:8px;margin-top:10px}
+  .vote .btn{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.3)}
+</style>
+</head>
+<body>
+<div class="intro">
+  <h1>WearWise</h1>
+  <p>Design direction — warm ivory, charcoal, muted rose/plum/sage · Inter + Instrument Serif · one decision per screen</p>
+</div>
+<div class="stage">
+
+  <!-- TODAY -->
+  <div class="col"><div class="label">Today — the daily habit</div>
+  <div class="phone"><div class="screen">
+    <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+    <div class="greet"><div class="hi">Good morning, Ananya</div>
+      <div class="sub">Thursday · Office day</div></div>
+    <div class="weather">⛅ <b>31°</b> Cloudy, humid — light fabrics today</div>
+    <div class="chips"><span class="chip on">Office</span><span class="chip">Casual</span><span class="chip">Festive</span><span class="chip">Travel</span><span class="chip">Party</span></div>
+    <div class="ocard">
+      <span class="best">✓ BEST FOR TODAY</span>
+      <div class="flat"><div class="item i1">👚</div><div class="item i3">👖</div><div class="item i2">👡</div></div>
+      <div class="oname">Monday Confidence</div>
+      <div class="owhy">Breathable cotton for humidity · fresh — last worn 3 weeks ago</div>
+      <div class="acts"><div class="btn pri">Wear this</div><div class="btn sec">Shuffle</div><div class="btn sec">Share</div></div>
+    </div>
+    <div class="ocard" style="opacity:.75">
+      <div class="flat"><div class="item i4">👗</div><div class="item i2">🧣</div></div>
+      <div class="oname">Soft Power</div>
+    </div>
+  </div>
+  <div class="nav"><div class="active"><span class="ic">☀️</span>Today</div><div><span class="ic">👗</span>Wardrobe</div><div style="width:56px"></div><div><span class="ic">🗓️</span>Plan</div><div><span class="ic">👤</span>Profile</div><div class="fab">✨</div></div>
+  </div></div>
+
+  <!-- WARDROBE -->
+  <div class="col"><div class="label">Wardrobe — everything you own</div>
+  <div class="phone"><div class="screen">
+    <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+    <div class="greet"><div class="hi">Your wardrobe</div><div class="sub">42 items · 68% worn this month</div></div>
+    <div class="chips"><span class="chip on">All</span><span class="chip">Tops</span><span class="chip">Ethnic</span><span class="chip">Bottoms</span><span class="chip">Footwear</span></div>
+    <div class="gems">💎 <b>Forgotten gems:</b> your plum kurta hasn't been worn in 74 days — it pairs with 6 items</div>
+    <div class="wgrid">
+      <div class="witem"><div class="wimg i1">👚</div><div class="wmeta">Worn 2d ago</div></div>
+      <div class="witem"><div class="wimg i2">👗</div><div class="wmeta">🧺 In wash</div></div>
+      <div class="witem"><div class="wimg i3">👖</div><div class="wmeta">Worn 1w ago</div></div>
+      <div class="witem"><div class="wimg i4">🥻</div><div class="wmeta">74d ago</div></div>
+      <div class="witem"><div class="wimg i2">🧥</div><div class="wmeta">Worn 3d ago</div></div>
+      <div class="witem"><div class="wimg i1">👡</div><div class="wmeta">Worn 5d ago</div></div>
+      <div class="witem"><div class="wimg i3">👜</div><div class="wmeta">2w ago</div></div>
+      <div class="witem"><div class="wimg i4">👠</div><div class="wmeta">1m ago</div></div>
+      <div class="witem"><div class="wimg i2">🧣</div><div class="wmeta">3w ago</div></div>
+    </div>
+    <div class="btn pri" style="flex:none">＋ Add items (camera / WhatsApp)</div>
+  </div>
+  <div class="nav"><div><span class="ic">☀️</span>Today</div><div class="active"><span class="ic">👗</span>Wardrobe</div><div style="width:56px"></div><div><span class="ic">🗓️</span>Plan</div><div><span class="ic">👤</span>Profile</div><div class="fab">✨</div></div>
+  </div></div>
+
+  <!-- SHARE / FRIEND VOTE -->
+  <div class="col"><div class="label">Share card — every share is an ad</div>
+  <div class="phone"><div class="screen">
+    <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+    <div class="greet"><div class="hi">Ask your circle</div><div class="sub">Sangeet on Saturday — which one?</div></div>
+    <div class="share">
+      <div class="flat"><div class="item i4">🥻</div><div class="item i1">💍</div><div class="item i3">👠</div></div>
+      <div class="oname">Option A · Festive Glow</div>
+      <div class="owhy">Plum silk + gold — photographs beautifully in evening light</div>
+      <div class="vote"><div class="btn">Vote A 💜 12</div><div class="btn">Vote B ✨ 5</div></div>
+      <div class="wm">styled with WearWise ✦</div>
+    </div>
+    <div class="pack"><div><b>Send to WhatsApp status</b>friends vote without installing</div><div class="pp">Share →</div></div>
+    <div class="gems">🎉 Outfits shared by friends bring <b>2 of every 5 new users</b> — this screen is the growth engine</div>
+  </div>
+  <div class="nav"><div><span class="ic">☀️</span>Today</div><div><span class="ic">👗</span>Wardrobe</div><div style="width:56px"></div><div><span class="ic">🗓️</span>Plan</div><div><span class="ic">👤</span>Profile</div><div class="fab">✨</div></div>
+  </div></div>
+
+  <!-- PREMIUM -->
+  <div class="col"><div class="label">Premium — occasion economy</div>
+  <div class="phone"><div class="screen">
+    <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+    <div class="greet"><div class="hi">WearWise Plus</div><div class="sub">Never think twice about what to wear</div></div>
+    <div class="prem"><span class="tag">MOST POPULAR</span>
+      <div class="price">₹99 <span>/month</span></div>
+      <div class="feat">Unlimited wardrobe · calendar sync · packing lists · repeat-safe across groups · laundry tracking</div>
+      <div class="btn pri" style="margin-top:10px">Start 7-day free trial</div>
+    </div>
+    <div class="prem basic">
+      <div class="price">₹199 <span>/month · Pro</span></div>
+      <div class="feat">Everything in Plus + human stylist review · colour analysis · priority styling</div>
+    </div>
+    <div class="sect">One-time packs</div>
+    <div class="pack"><div><b>💍 Wedding Guest Pack</b>full event week planned</div><div class="pp">₹149</div></div>
+    <div class="pack"><div><b>✈️ Travel Pack</b>day-wise packing list</div><div class="pp">₹99</div></div>
+    <div class="pack"><div><b>🪔 Festive Pack</b>Diwali week, sorted</div><div class="pp">₹129</div></div>
+  </div>
+  <div class="nav"><div><span class="ic">☀️</span>Today</div><div><span class="ic">👗</span>Wardrobe</div><div style="width:56px"></div><div><span class="ic">🗓️</span>Plan</div><div class="active"><span class="ic">👤</span>Profile</div><div class="fab">✨</div></div>
+  </div></div>
+
+</div>
+</body>
+</html>
