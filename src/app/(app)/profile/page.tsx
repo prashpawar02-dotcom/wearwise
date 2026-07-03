@@ -6,6 +6,7 @@ import { SignOutButton } from "@/components/nav/sign-out-button";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/Icon";
 import { DailyDropPreferences } from "./daily-drop-preferences";
+import { WeatherCityCard } from "./weather-city-card";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,9 @@ export default async function ProfilePage() {
             Open Closet Board <Icon.ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </Card>
+
+        {/* Weather city — powers real weather advice on Today + Style Me */}
+        <WeatherCityCard initialCity={profile?.city ?? null} />
 
         {/* Daily Outfit Drop preference (preview only) */}
         <DailyDropPreferences />
