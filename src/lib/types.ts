@@ -43,6 +43,14 @@ export interface Profile {
   is_premium: boolean;
   onboarded: boolean;
   created_at: string;
+  // Daily Outfit Drop preferences (migration 0008, Phase 1). Preferences only —
+  // nothing reads these to send notifications yet.
+  timezone: string | null;
+  daily_drop_enabled: boolean;
+  daily_drop_time: string;          // 'HH:MM' or 'HH:MM:SS' (Postgres time)
+  daily_drop_days: number[];        // 0=Sun..6=Sat
+  show_quiet_gems: boolean;
+  weather_advice_enabled: boolean;
 }
 
 export interface WardrobeItem {

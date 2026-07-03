@@ -55,8 +55,16 @@ export default async function ProfilePage() {
         {/* Weather city — powers real weather advice on Today + Style Me */}
         <WeatherCityCard initialCity={profile?.city ?? null} />
 
-        {/* Daily Outfit Drop preference (preview only) */}
-        <DailyDropPreferences />
+        {/* Daily Outfit Drop preferences — persisted to the user's profile */}
+        <DailyDropPreferences
+          initial={{
+            enabled: profile?.daily_drop_enabled ?? false,
+            time: profile?.daily_drop_time ?? null,
+            days: profile?.daily_drop_days ?? null,
+            quietGems: profile?.show_quiet_gems ?? true,
+            weatherAdvice: profile?.weather_advice_enabled ?? true,
+          }}
+        />
 
         {/* Privacy */}
         <Card className="p-4">
