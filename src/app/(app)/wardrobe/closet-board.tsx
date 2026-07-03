@@ -13,6 +13,8 @@ import {
   ZONE_ORDER,
   colorToHex,
   garmentKindForItem,
+  itemBadge,
+  lastWornLabel,
   zoneForItem,
   type Zone,
 } from "@/lib/wardrobe";
@@ -34,7 +36,7 @@ export function ClosetBoard({
   const [query, setQuery] = useState("");
 
   const byZone = useMemo(() => {
-    const m: Record<Zone, WardrobeItem[]> = { hanging: [], folded: [], shoes: [], accessories: [] };
+    const m: Record<Zone, WardrobeItem[]> = { hanging: [], folded: [], occasion: [], shoes: [], accessories: [] };
     for (const it of items) m[zoneForItem(it)].push(it);
     return m;
   }, [items]);
@@ -86,6 +88,7 @@ export function ClosetBoard({
     { key: "all", label: "All", count: items.length },
     { key: "hanging", label: "Hanging", count: byZone.hanging.length },
     { key: "folded", label: "Folded", count: byZone.folded.length },
+    { key: "occasion", label: "Occasion", count: byZone.occasion.length },
     { key: "shoes", label: "Shoes", count: byZone.shoes.length },
     { key: "accessories", label: "Accessories", count: byZone.accessories.length },
     { key: "needs_review", label: "Needs review", count: needsReview.length },
@@ -123,6 +126,8 @@ export function ClosetBoard({
         <RailZone items={byZone.hanging} urls={urls} />
         <ZoneDivider />
         <ShelfZone items={byZone.folded} urls={urls} />
+        <ZoneDivider />
+        <OccasionZone items={byZone.occasion} urls={urls} />
         <ZoneDivider />
         <ShoeZone items={byZone.shoes} urls={urls} />
         <ZoneDivider />
@@ -176,7 +181,9 @@ function Header({
         <div>
           <h1 className="ww-display text-3xl text-charcoal">Wardrobe</h1>
           <p className="mt-1 text-sm text-graphite">Your clothes, organized for better outfit decisions.</p>
-          <p className="mt-0.5 text-xs text-mist">{count} {count === 1 ? "item" : "items"} · private to you</p>
+          <p className="mt-0.5 flex items-center gap-1 text-xs text-mist">
+            <Icon.Lock className="h-3 w-3" /> Private by default · delete items anytime
+          </p>
         </div>
         <div className="flex shrink-0 gap-2">
           <button
@@ -224,7 +231,6 @@ function Stat({ value, label, tone }: { value: number; label: string; tone?: "ch
 
 // ===================== Board zones =====================
 
-/** Slightly stronger separator between closet zones. */
 function ZoneDivider() {
   return <div className="my-5 h-px bg-mist/40" aria-hidden="true" />;
 }
@@ -285,7 +291,6 @@ function RailZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
         <p className="py-2 text-xs text-mist">No hanging pieces yet.</p>
       ) : (
         <div className="relative pt-3.5">
-          {/* rail line */}
           <div className="absolute left-0 right-0 top-0 h-[3px] rounded-full bg-mist/60" aria-hidden="true" />
           <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1 pr-4">
             {shown.map((item) => (
@@ -315,6 +320,29 @@ function ShelfZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string
             {shown.map((item) => (
               <Link key={item.id} href={`/wardrobe/${item.id}`} className="shrink-0">
                 <MiniTile item={item} url={urls[item.image_path]} size={76} rounded="rounded-ww-sm" className="shadow-ww-sm" />
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OccasionZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string, string> }) {
+  const shown = items.slice(0, 6);
+  return (
+    <div>
+      <ZoneHead zone="occasion" />
+      {shown.length === 0 ? (
+        <p className="py-2 text-xs text-mist">No festive, ethnic or formal pieces yet.</p>
+      ) : (
+        <div className="rounded-ww-md border border-champagne/25 bg-champagne/[0.06] p-3">
+          <div className="no-scrollbar flex gap-3 overflow-x-auto pr-4">
+            {shown.map((item) => (
+              <Link key={item.id} href={`/wardrobe/${item.id}`} className="flex w-[76px] shrink-0 flex-col items-center">
+                <MiniTile item={item} url={urls[item.image_path]} size={76} className="shadow-ww-sm" />
+                <span className="mt-1 w-full truncate text-center text-[10px] text-graphite">{itemName(item)}</span>
               </Link>
             ))}
           </div>
@@ -382,10 +410,16 @@ function TrayZone({ items, urls }: { items: WardrobeItem[]; urls: Record<string,
 
 // ===================== Grid card =====================
 
+const BADGE_TONE: Record<"champagne" | "plum" | "sage", string> = {
+  champagne: "bg-champagne/90 text-charcoal",
+  plum: "bg-plum text-bone",
+  sage: "bg-sage/90 text-charcoal",
+};
+
 function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
   const occ = (item.occasion_tags ?? []).slice(0, 2) as Occasion[];
-  const needsReview = item.ai_tag_status === "needs_review";
-  const analyzing = item.ai_tag_status === "analyzing";
+  const badge = itemBadge(item);
+  const worn = lastWornLabel(item);
 
   return (
     <Link href={`/wardrobe/${item.id}`} className="group overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-sm">
@@ -400,9 +434,9 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
         ) : (
           <GarmentTile fill kind={garmentKindForItem(item)} color={colorToHex(item.color)} rounded="rounded-none" className="border-0" />
         )}
-        {(needsReview || analyzing) && (
-          <span className="absolute left-2 top-2 rounded-full bg-champagne/90 px-2 py-0.5 text-[10px] font-medium text-charcoal">
-            {analyzing ? "Analyzing…" : "Needs review"}
+        {badge && (
+          <span className={cn("absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-medium", BADGE_TONE[badge.tone])}>
+            {badge.label}
           </span>
         )}
       </div>
@@ -418,6 +452,7 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
             ))}
           </div>
         )}
+        {worn && <p className="mt-1 text-[11px] text-mist">{worn}</p>}
       </div>
     </Link>
   );
@@ -463,7 +498,6 @@ function EmptyState() {
             {[0, 1, 2].map((i) => (
               <div key={i} className="h-16 w-16 rounded-ww-sm border border-dashed border-hairline-strong bg-ivory/50" />
             ))}
-            {/* one glowing add tile */}
             <div className="grid h-16 w-16 place-items-center rounded-ww-sm border border-plum/40 bg-plum/[0.06] shadow-ww-sm">
               <Icon.Plus className="h-5 w-5 text-plum" />
             </div>
@@ -475,7 +509,7 @@ function EmptyState() {
         <p className="ww-eyebrow">Empty wardrobe</p>
         <h2 className="ww-display mt-2 text-2xl text-charcoal">Your cupboard is waiting.</h2>
         <p className="mx-auto mt-2 max-w-xs text-sm text-graphite">
-          Add a few everyday clothes first. WearWise will organize them into rails, shelves, shoes and accessories.
+          Add a few everyday clothes first. WearWise will organize them into rails, shelves, shoes, occasion wear and accessories.
         </p>
         <div className="mx-auto mt-6 flex max-w-xs flex-col gap-2">
           <Button asChild size="lg">
@@ -483,7 +517,7 @@ function EmptyState() {
           </Button>
         </div>
         <p className="mt-4 flex items-center justify-center gap-1.5 text-xs text-graphite">
-          <Icon.Lock className="h-3 w-3" /> Your wardrobe is private by default. Delete items anytime.
+          <Icon.Lock className="h-3 w-3" /> Private by default. No public profile. Delete items anytime.
         </p>
       </div>
     </div>

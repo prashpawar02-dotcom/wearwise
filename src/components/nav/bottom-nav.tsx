@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 const items = [
   { href: "/dashboard", label: "Today", icon: Home },
   { href: "/wardrobe", label: "Wardrobe", icon: Shirt },
-  { href: "/occasion/new", label: "Suggest", icon: Sparkles },
-  { href: "/onboarding", label: "Profile", icon: User },
+  { href: "/occasion/new", label: "Style Me", icon: Sparkles },
+  { href: "/profile", label: "You", icon: User },
 ];
 
 export function BottomNav() {

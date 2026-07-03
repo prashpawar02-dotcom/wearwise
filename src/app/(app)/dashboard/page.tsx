@@ -35,21 +35,38 @@ export default async function DashboardPage() {
   const { user, supabase, profile } = await requireProfile();
   if (!profile?.onboarded) redirect("/onboarding");
 
-  const [{ count: itemCount }, { data: requests }, { data: worn }, { data: approvedData }] =
-    await Promise.all([
-      supabase.from("wardrobe_items").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-      supabase.from("outfit_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3),
-      supabase.from("worn_history").select("*").eq("user_id", user.id).order("worn_on", { ascending: false }).limit(1),
-      // RLS already restricts to the owner's APPROVED suggestions; we re-state
-      // both filters as defense-in-depth. Pull the parent request for context.
-      supabase
-        .from("outfit_suggestions")
-        .select("*, request:outfit_requests(occasion, notes, created_at)")
-        .eq("user_id", user.id)
-        .eq("status", "approved")
-        .order("created_at", { ascending: false })
-        .limit(12),
-    ]);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+
+  const [
+    { count: itemCount },
+    { data: requests },
+    { data: worn },
+    { data: approvedData },
+    { count: weeklyWorn },
+    { data: quietGemRows },
+  ] = await Promise.all([
+    supabase.from("wardrobe_items").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+    supabase.from("outfit_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3),
+    supabase.from("worn_history").select("*").eq("user_id", user.id).order("worn_on", { ascending: false }).limit(1),
+    // RLS already restricts to the owner's APPROVED suggestions; we re-state
+    // both filters as defense-in-depth. Pull the parent request for context.
+    supabase
+      .from("outfit_suggestions")
+      .select("*, request:outfit_requests(occasion, notes, created_at)")
+      .eq("user_id", user.id)
+      .eq("status", "approved")
+      .order("created_at", { ascending: false })
+      .limit(12),
+    // Real signals for the daily insight card (owner-scoped, no faked data).
+    supabase.from("worn_history").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("worn_on", sevenDaysAgo),
+    supabase
+      .from("wardrobe_items")
+      .select("user_facing_name, category, last_worn_at")
+      .eq("user_id", user.id)
+      .not("last_worn_at", "is", null)
+      .order("last_worn_at", { ascending: true })
+      .limit(1),
+  ]);
 
   const items = itemCount ?? 0;
   const firstName = profile?.full_name?.split(" ")[0];
@@ -58,6 +75,12 @@ export default async function DashboardPage() {
   // ---- Build the real Best Pick (if any approved suggestion exists) ----
   const approved = (approvedData ?? []) as ApprovedSuggestion[];
   const bestPick = await buildBestPick(approved, user.id, supabase);
+
+  const dailyInsight = buildDailyInsight({
+    quietGem: (quietGemRows?.[0] as QuietGemRow | undefined) ?? null,
+    weeklyWorn: weeklyWorn ?? 0,
+    itemsCount: items,
+  });
 
   return (
     <main className="min-h-dvh pb-28">
@@ -101,8 +124,7 @@ export default async function DashboardPage() {
             </>
           ) : (
             <>
-              <Chip><Icon.Sun className="h-3.5 w-3.5 text-champagne" /> 28°</Chip>
-              <Chip><Icon.Briefcase className="h-3.5 w-3.5" /> Office</Chip>
+              <Chip><Icon.Briefcase className="h-3.5 w-3.5" /> Everyday</Chip>
               <Chip tone="filled">Smart casual</Chip>
               <Link href="/occasion/new" className="shrink-0">
                 <Chip className="text-graphite">+ change</Chip>
@@ -124,10 +146,15 @@ export default async function DashboardPage() {
           </Card>
         )}
 
+        {bestPick && <p className="ww-eyebrow mt-6 text-plum">Today&apos;s Pick is ready</p>}
+
         {/* Best Pick card */}
-        <section className="mt-5">
+        <section className={bestPick ? "mt-2" : "mt-5"}>
           {bestPick ? <RealBestPick pick={bestPick} /> : <SampleBestPick items={items} />}
         </section>
+
+        {/* Daily insight / surprise — safe, real signals only */}
+        <DailyInsight text={dailyInsight} />
 
         {/* Quick stats */}
         <div className="mt-6 grid grid-cols-2 gap-3">
@@ -238,16 +265,23 @@ function RealBestPick({ pick }: { pick: BestPick }) {
         {/* Reasoning */}
         {pick.reasoning.length > 0 && <ReasoningCards items={pick.reasoning} className="mt-4" />}
 
-        {/* Actions */}
-        <div className="mt-5 flex gap-2">
-          <WornTodayButton suggestionId={pick.suggestionId} itemIds={pick.itemIds} />
-          {pick.hasAlternatives && (
+        {/* Actions — Wear this / Swap one item / Another option */}
+        <div className="mt-5 space-y-2">
+          <div className="flex">
+            <WornTodayButton suggestionId={pick.suggestionId} itemIds={pick.itemIds} />
+          </div>
+          <div className="flex gap-2">
             <Button asChild variant="secondary" className="flex-1">
               <Link href={`/outfits/${pick.requestId}`}>
-                <Icon.Shuffle className="h-3.5 w-3.5" /> Another
+                <Icon.Shuffle className="h-3.5 w-3.5" /> Swap one item
               </Link>
             </Button>
-          )}
+            <Button asChild variant="secondary" className="flex-1">
+              <Link href={pick.hasAlternatives ? `/outfits/${pick.requestId}` : "/occasion/new"}>
+                <Icon.Sparkle className="h-3.5 w-3.5" /> Another option
+              </Link>
+            </Button>
+          </div>
         </div>
         <Link
           href={`/outfits/${pick.requestId}`}
@@ -429,6 +463,45 @@ function colorToHex(color?: string | null): string {
   };
   const key = (color ?? "").trim().toLowerCase();
   return map[key] ?? "#EAE3D7";
+}
+
+// ===================== Daily insight (safe, real signals only) =====================
+
+type QuietGemRow = { user_facing_name: string | null; category: string | null; last_worn_at: string | null };
+
+function buildDailyInsight({
+  quietGem,
+  weeklyWorn,
+  itemsCount,
+}: {
+  quietGem: QuietGemRow | null;
+  weeklyWorn: number;
+  itemsCount: number;
+}): string {
+  if (quietGem?.last_worn_at) {
+    const days = Math.floor((Date.now() - new Date(quietGem.last_worn_at).getTime()) / 86_400_000);
+    const name = quietGem.user_facing_name ?? quietGem.category ?? "A quiet piece";
+    if (days >= 30) return `${name} has been quiet for ${days} days — a fresh option to bring back today.`;
+  }
+  if (weeklyWorn > 0) {
+    return `${weeklyWorn} ${weeklyWorn === 1 ? "morning" : "mornings"} sorted this week. WearWise keeps learning your taste.`;
+  }
+  if (itemsCount > 0) return "Fresh pick. WearWise learns more each time you mark an outfit worn.";
+  return "Add a few clothes and WearWise will start preparing your daily pick.";
+}
+
+function DailyInsight({ text }: { text: string }) {
+  return (
+    <div className="mt-5 flex items-start gap-3 rounded-ww-md border border-lavender/40 bg-lavender/[0.14] p-3.5">
+      <span aria-hidden="true" className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-bone">
+        <Icon.Sparkle className="h-3.5 w-3.5 text-plum" />
+      </span>
+      <div>
+        <p className="ww-eyebrow text-plum">Daily insight</p>
+        <p className="mt-0.5 text-sm leading-snug text-charcoal">{text}</p>
+      </div>
+    </div>
+  );
 }
 
 function greeting() {
