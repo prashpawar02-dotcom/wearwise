@@ -118,3 +118,25 @@ export interface OutfitSuggestionFeedback {
   note: string | null;
   created_at: string;
 }
+
+// Daily Outfit Drop — cached recommendation, one per user per local date
+// (migration 0009). Stores wardrobe item IDs only; never image URLs.
+export type DailyRecStatus = "prepared" | "opened" | "worn" | "skipped" | "failed";
+
+export interface DailyRecommendation {
+  id: string;
+  user_id: string;
+  local_date: string;            // 'YYYY-MM-DD' in the user's local timezone
+  status: DailyRecStatus;
+  selected_item_ids: string[];
+  weather_summary: string | null;
+  occasion_context: string | null;
+  reasoning: string | null;
+  daily_insight: string | null;
+  fail_reason: string | null;
+  opened_at: string | null;
+  worn_at: string | null;
+  skipped_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

@@ -12,9 +12,11 @@ import { CompactOutfitStack } from "@/components/wearwise/CompactOutfitStack";
 import { ReasoningCards, type ReasoningItem } from "@/components/wearwise/ReasoningCards";
 import type { OutfitItem } from "@/components/wearwise/OutfitItemRow";
 import type { GarmentKind } from "@/components/ui/Icon";
-import { OCCASIONS, type OutfitSuggestion, type WardrobeItem } from "@/lib/types";
+import { OCCASIONS, type OutfitSuggestion, type WardrobeItem, type DailyRecommendation } from "@/lib/types";
 import { WornTodayButton } from "@/app/(app)/outfits/[requestId]/worn-today-button";
 import { getWeatherContext, type WeatherContext } from "@/lib/weather";
+import { userLocalDate } from "@/lib/daily-drop";
+import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
 
 export const dynamic = "force-dynamic"; // per-user signed URLs; never cache
 
@@ -86,6 +88,10 @@ export default async function DashboardPage() {
   // Honest weather context (null when no API key or no city).
   const weather = await getWeatherContext(profile?.city);
 
+  // Today's Drop (Phase 2): read the cached daily recommendation for the user's
+  // local date. Read-only here — preparation runs via the manual prepare route.
+  const todayDrop = await loadTodayDrop(user.id, profile?.timezone ?? null, supabase);
+
   return (
     <main className="min-h-dvh pb-28">
       <div className="animate-fade-in px-6 pt-10">
@@ -115,6 +121,17 @@ export default async function DashboardPage() {
 
         {/* Real weather context (honest fallback when unavailable) */}
         <WeatherStrip weather={weather} />
+
+        {/* Today's Drop — cached daily recommendation (Phase 2). Prepared drop
+            renders as a prominent card; a failed prepare shows honest copy;
+            when there's no drop yet the section is simply absent. */}
+        {todayDrop?.view && <DailyDropCard drop={todayDrop.view} />}
+        {todayDrop?.failed && (
+          <Card className="mt-5 border-champagne/30 bg-champagne/[0.08] p-4">
+            <p className="font-medium text-charcoal">Today&apos;s pick isn&apos;t ready</p>
+            <p className="mt-1 text-sm text-graphite">{todayDrop.failed}</p>
+          </Card>
+        )}
 
         {/* Context chips */}
         <div className="no-scrollbar -mx-6 mt-4 flex gap-2 overflow-x-auto px-6">
@@ -540,4 +557,71 @@ function greeting() {
 
 function dateLabel() {
   return new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+}
+
+// ===================== Today's Drop (Phase 2 read) =====================
+
+/**
+ * Read today's cached daily_recommendation for the user's local date and shape
+ * it for the client card. Signs private image paths at render time (never
+ * stored). Returns { view } for a usable drop, { failed } for an honest
+ * failure message, or null when there is no drop for today.
+ */
+async function loadTodayDrop(
+  userId: string,
+  timezone: string | null,
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"]
+): Promise<{ view?: DailyDropView; failed?: string } | null> {
+  const localDate = userLocalDate(timezone);
+  const { data } = await supabase
+    .from("daily_recommendations")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("local_date", localDate)
+    .maybeSingle();
+  if (!data) return null;
+
+  const rec = data as DailyRecommendation;
+  if (rec.status === "failed") {
+    return {
+      failed:
+        rec.reasoning ||
+        "We couldn't prepare today's outfit. Add a few clothes or mark items available to improve tomorrow's pick.",
+    };
+  }
+
+  const ids = rec.selected_item_ids ?? [];
+  let members: WardrobeItem[] = [];
+  if (ids.length) {
+    const { data: itemData } = await supabase
+      .from("wardrobe_items")
+      .select("*")
+      .eq("user_id", userId)
+      .in("id", ids);
+    members = (itemData ?? []) as WardrobeItem[];
+  }
+  const byId = new Map(members.map((m) => [m.id, m]));
+  const urls = await signWardrobePaths(members.map((m) => m.image_path));
+
+  const items = ids
+    .map((id) => byId.get(id))
+    .filter((m): m is WardrobeItem => Boolean(m))
+    .map((m) => ({
+      id: m.id,
+      label: m.user_facing_name ?? m.category ?? "Item",
+      sub: [m.category, m.color].filter(Boolean).join(" · ") || null,
+      image: urls[m.image_path] ?? null,
+    }));
+
+  const view: DailyDropView = {
+    id: rec.id,
+    status: rec.status,
+    occasionContext: rec.occasion_context,
+    weatherSummary: rec.weather_summary,
+    reasoning: rec.reasoning,
+    dailyInsight: rec.daily_insight,
+    itemIds: ids,
+    items,
+  };
+  return { view };
 }
