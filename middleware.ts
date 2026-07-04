@@ -6,5 +6,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|.*\\.(?:png|jpg|jpeg|svg|webp)$).*)"],
+  // Exclude /api/* so API route handlers run directly and do their OWN auth
+  // (e.g. the cron route checks CRON_SECRET; the manual prepare route checks the
+  // session). Without this, the session-refresh middleware would redirect an
+  // unauthenticated API call (like the server-to-server cron) to /login.
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|manifest.webmanifest|.*\\.(?:png|jpg|jpeg|svg|webp)$).*)"],
 };
