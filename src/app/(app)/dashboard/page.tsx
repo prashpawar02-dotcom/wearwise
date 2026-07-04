@@ -17,6 +17,7 @@ import { WornTodayButton } from "@/app/(app)/outfits/[requestId]/worn-today-butt
 import { getWeatherContext, type WeatherContext } from "@/lib/weather";
 import { userLocalDate } from "@/lib/daily-drop";
 import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
+import { PrepareDropButton } from "./prepare-drop-button";
 
 export const dynamic = "force-dynamic"; // per-user signed URLs; never cache
 
@@ -135,8 +136,12 @@ export default async function DashboardPage() {
           <Card className="mt-5 border-champagne/30 bg-champagne/[0.08] p-4">
             <p className="font-medium text-charcoal">Today&apos;s pick isn&apos;t ready</p>
             <p className="mt-1 text-sm text-graphite">{todayDrop.failed}</p>
+            {/* Safe retry — normal prepare, never force */}
+            <PrepareDropButton compact />
           </Card>
         )}
+        {/* Manual beta prepare — only when opted in and no drop exists today */}
+        {profile?.daily_drop_enabled && !todayDrop && <PrepareDropButton />}
 
         {/* Context chips */}
         <div className="no-scrollbar -mx-6 mt-4 flex gap-2 overflow-x-auto px-6">
