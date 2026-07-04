@@ -33,10 +33,33 @@ export interface PrepareResult {
   localDate: string;
   /** Machine reason for disabled/failed/exists (e.g. 'daily_drop_disabled', 'too_few_items'). */
   reason?: string;
+  /** Non-fatal warning (e.g. the default timezone was used because none was saved). */
+  warning?: string;
   recommendation: DailyRecommendation | null;
 }
 
 type SupabaseServerClient = ReturnType<typeof createClient>;
+
+/** True if `tz` is a valid IANA timezone the runtime understands. */
+function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a usable timezone. If the profile has a valid IANA zone we use it;
+ * otherwise we fall back to DEFAULT_TZ and flag `usedFallback` so callers can
+ * surface an honest warning. We NEVER guess from city and NEVER pretend a
+ * missing/invalid zone is reliable.
+ */
+function resolveTimezone(tz: string | null | undefined): { timeZone: string; usedFallback: boolean } {
+  if (tz && isValidTimeZone(tz)) return { timeZone: tz, usedFallback: false };
+  return { timeZone: DEFAULT_TZ, usedFallback: true };
+}
 
 /** Resolve the user's LOCAL calendar date ('YYYY-MM-DD') for a timezone. */
 export function userLocalDate(timezone: string | null | undefined, now: Date = new Date()): string {
@@ -45,13 +68,13 @@ export function userLocalDate(timezone: string | null | undefined, now: Date = n
 
 /** Resolve the user's LOCAL calendar date ('YYYY-MM-DD') for a timezone. */
 function localDateISO(timezone: string | null | undefined, now: Date = new Date()): string {
-  const fmt = (tz: string) =>
-    new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  try {
-    return fmt(timezone || DEFAULT_TZ);
-  } catch {
-    return fmt(DEFAULT_TZ);
-  }
+  const { timeZone } = resolveTimezone(timezone);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
 }
 
 type Role = "top" | "bottom" | "dress" | "shoes" | "layer" | "accessory" | "other";
@@ -176,9 +199,14 @@ async function upsertRecommendation(
   supabase: SupabaseServerClient,
   input: UpsertInput
 ): Promise<DailyRecommendation | null> {
+  // Reset lifecycle timestamps: a freshly (re)prepared or failed row is a new
+  // state for the day, so any prior opened/worn/skipped stamps no longer apply.
   const { data, error } = await supabase
     .from("daily_recommendations")
-    .upsert({ ...input, updated_at: new Date().toISOString() }, { onConflict: "user_id,local_date" })
+    .upsert(
+      { ...input, opened_at: null, worn_at: null, skipped_at: null, updated_at: new Date().toISOString() },
+      { onConflict: "user_id,local_date" }
+    )
     .select("*")
     .single();
   if (error) return null;
@@ -196,15 +224,21 @@ export async function prepareDailyDrop(
   const { data: profileData } = await supabase.from("profiles").select("*").eq("id", userId).single();
   const profile = profileData as Profile | null;
 
+  // Resolve timezone honestly: use the saved zone if valid, else a fallback
+  // that is flagged as a warning (never silently pretend it's reliable).
+  const tzInfo = resolveTimezone(profile?.timezone);
+  const tzWarning = tzInfo.usedFallback
+    ? "timezone_missing_or_invalid_default_used"
+    : undefined;
   const localDate = options.localDate ?? localDateISO(profile?.timezone);
 
   if (!profile) {
-    return { status: "failed", localDate, reason: "no_profile", recommendation: null };
+    return { status: "failed", localDate, reason: "no_profile", warning: tzWarning, recommendation: null };
   }
 
   // ---- Opt-in gate: never prepare for a disabled user ----
   if (!profile.daily_drop_enabled) {
-    return { status: "disabled", localDate, reason: "daily_drop_disabled", recommendation: null };
+    return { status: "disabled", localDate, reason: "daily_drop_disabled", warning: tzWarning, recommendation: null };
   }
 
   // ---- Idempotency: return the existing row unless forced ----
@@ -221,6 +255,7 @@ export async function prepareDailyDrop(
       status: rec.status === "failed" ? "failed" : "exists",
       localDate,
       reason: rec.fail_reason ?? undefined,
+      warning: tzWarning,
       recommendation: rec,
     };
   }
@@ -241,7 +276,7 @@ export async function prepareDailyDrop(
       daily_insight: null,
       fail_reason: reason,
     });
-    return { status: "failed", localDate, reason, recommendation: rec };
+    return { status: "failed", localDate, reason, warning: tzWarning, recommendation: rec };
   };
 
   if (allItems.length === 0) {
@@ -293,8 +328,8 @@ export async function prepareDailyDrop(
 
   if (!rec) {
     // The outfit was fine but the write failed — stay honest, don't fake success.
-    return { status: "failed", localDate, reason: "db_error", recommendation: null };
+    return { status: "failed", localDate, reason: "db_error", warning: tzWarning, recommendation: null };
   }
 
-  return { status: "prepared", localDate, recommendation: rec };
+  return { status: "prepared", localDate, warning: tzWarning, recommendation: rec };
 }

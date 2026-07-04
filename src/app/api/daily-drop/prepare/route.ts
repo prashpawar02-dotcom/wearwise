@@ -24,17 +24,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ status: "error", reason: "unauthorized" }, { status: 401 });
   }
 
-  // Optional force flag; tolerate an empty/absent body.
+  // Only `force` (strict boolean true) is honoured. Any other field in the body
+  // is ignored — the user is ALWAYS taken from the session, never from the body,
+  // so a client can never prepare a drop for someone else.
   let force = false;
   try {
     const body = await req.json();
-    force = Boolean(body?.force);
+    force = body?.force === true;
   } catch {
-    // no body — fine
+    // no/invalid body — treat as force:false
   }
 
   const result = await prepareDailyDrop(user.id, { force });
 
-  // Never leak wardrobe image data — prepareDailyDrop already returns IDs only.
-  return NextResponse.json(result, { status: 200 });
+  // Shape an explicit, minimal response. selected_item_ids are IDs only (no
+  // image paths / signed URLs ever), so nothing sensitive is exposed here.
+  return NextResponse.json(
+    {
+      status: result.status,
+      localDate: result.localDate,
+      recommendationId: result.recommendation?.id ?? null,
+      reason: result.reason ?? null,
+      failReason: result.status === "failed" ? result.reason ?? null : null,
+      warning: result.warning ?? null,
+    },
+    { status: 200 }
+  );
 }

@@ -90,7 +90,12 @@ export default async function DashboardPage() {
 
   // Today's Drop (Phase 2): read the cached daily recommendation for the user's
   // local date. Read-only here — preparation runs via the manual prepare route.
-  const todayDrop = await loadTodayDrop(user.id, profile?.timezone ?? null, supabase);
+  // Gate on the opt-in: when Daily Drop is OFF we don't surface it at all, even
+  // if a cached row remains from before it was disabled (the row is kept for
+  // history, never deleted or regenerated here).
+  const todayDrop = profile?.daily_drop_enabled
+    ? await loadTodayDrop(user.id, profile?.timezone ?? null, supabase)
+    : null;
 
   return (
     <main className="min-h-dvh pb-28">
@@ -612,6 +617,15 @@ async function loadTodayDrop(
       sub: [m.category, m.color].filter(Boolean).join(" · ") || null,
       image: urls[m.image_path] ?? null,
     }));
+
+  // If every item from today's pick has since been deleted, don't show an empty
+  // card — surface an honest, non-blaming note instead.
+  if (ids.length > 0 && items.length === 0) {
+    return {
+      failed:
+        "Some pieces from today's pick are no longer in your wardrobe. Prepare a fresh outfit to update it.",
+    };
+  }
 
   const view: DailyDropView = {
     id: rec.id,
