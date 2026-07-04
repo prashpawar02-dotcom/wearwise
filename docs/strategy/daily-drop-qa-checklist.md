@@ -136,6 +136,81 @@ Verify **time-window skipping**: a user whose local time is NOT within
 Note: **notifications are still not live.** The cron only prepares/caches drops;
 the Today dashboard shows them when the user opens the app.
 
+## Production readiness (Phase 3B)
+
+### Vercel env checklist
+- [ ] `NEXT_PUBLIC_SUPABASE_URL`
+- [ ] `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- [ ] `NEXT_PUBLIC_SITE_URL`
+- [ ] `SUPABASE_SERVICE_ROLE_KEY` (server-only; never `NEXT_PUBLIC_`)
+- [ ] `CRON_SECRET` (long random string)
+- [ ] `OPENAI_API_KEY` (existing, for auto-tagging)
+
+### Supabase migration checklist
+- [ ] 0008 applied (profile preference columns)
+- [ ] 0009 applied (`daily_recommendations` table + RLS)
+- [ ] 0010 applied (insert-own removed) — apply AFTER the service-role key is set
+
+### Cron safety behavior (verify)
+- No `CRON_SECRET` in env → route returns **500** `cron_not_configured` (never runs
+  unprotected). Logs `misconfigured: CRON_SECRET is not set`.
+- Wrong/missing `Authorization` header → **401** `unauthorized`. Logs `rejected`.
+- No `SUPABASE_SERVICE_ROLE_KEY` (or URL) → **500** `server_not_configured`. Logs
+  `misconfigured: service-role client unavailable`.
+- Supabase profiles query error → **500** `profiles_query_failed`.
+
+### Local cron test (dev server running)
+```bash
+# unauthorized → 401
+curl -i -X POST http://localhost:3000/api/cron/daily-drop/prepare
+# authorized → 200 summary
+curl -s -X POST http://localhost:3000/api/cron/daily-drop/prepare \
+  -H "Authorization: Bearer $CRON_SECRET" | jq
+```
+
+### Production cron test
+```bash
+curl -s -X POST https://YOUR-APP/api/cron/daily-drop/prepare \
+  -H "Authorization: Bearer $CRON_SECRET" | jq
+```
+Vercel Cron itself calls the path on schedule and adds the bearer header
+automatically when `CRON_SECRET` is set in the project.
+
+### How to read Vercel logs
+Vercel dashboard → Project → **Logs** (or **Deployments → Functions**), filter by
+`/api/cron/daily-drop/prepare`. Expect lines prefixed `[cron:daily-drop]`:
+`started`, `checked=N opted-in profiles`, `completed in Nms checked=… attempted=…
+prepared=… exists=… failed=… skipped=… errors=[…reasons…]`. Logs contain **no**
+wardrobe names, image paths, signed URLs, secrets, or full profiles.
+
+### Verify one row per user/date (SQL)
+```sql
+select user_id, local_date, count(*)
+from daily_recommendations
+group by user_id, local_date
+having count(*) > 1;   -- expect ZERO rows
+```
+
+### Verify time-window / skip behavior
+- Set your profile `daily_drop_time` a few minutes AHEAD of your local time, run
+  cron → you are `skipped` (before window). Set it to just BEHIND now (within 30
+  min), run cron → `prepared`.
+- Disabled users (`daily_drop_enabled=false`) are excluded by the query →
+  counted only if enabled; disabled never appear in `checked`.
+- Missing-timezone users are excluded by `.not("timezone","is",null)` → not in
+  `checked`. (A row with an invalid tz string is `skipped` — `localSnapshot`
+  returns null.)
+
+### Rollback notes
+- To pause scheduling: remove the `crons` entry from `vercel.json` (or unset
+  `CRON_SECRET` → route 500s and stops preparing). No data is lost.
+- To restore client-side inserts (revert 0010): re-create the policy
+  `create policy "dailyrec_insert_own" on public.daily_recommendations for insert
+  with check (user_id = auth.uid());` and point the manual route back at the
+  session client. Not recommended — server-controlled inserts are safer.
+- Cached `daily_recommendations` rows are safe to keep or delete; deleting a
+  day's rows simply makes the next prepare re-create them.
+
 ## Known NOT live (future phases)
 
 - Push notifications, web push, email, PWA service worker, any provider (Phase 4).

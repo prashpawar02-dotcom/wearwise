@@ -71,11 +71,18 @@ type OptedInProfile = {
   daily_drop_days: number[] | null;
 };
 
+// Structured, privacy-safe logger. NEVER logs the CRON_SECRET, service-role
+// key, user profiles, wardrobe item names, image paths, or signed URLs — only
+// route lifecycle, counts, and error reasons.
+const LOG = "[cron:daily-drop]";
+
 async function runCron(req: Request): Promise<NextResponse> {
   if (process.env.CRON_SECRET && !isAuthorized(req)) {
+    console.warn(`${LOG} rejected: missing or invalid authorization`);
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!process.env.CRON_SECRET) {
+    console.error(`${LOG} misconfigured: CRON_SECRET is not set`);
     return NextResponse.json({ error: "cron_not_configured" }, { status: 500 });
   }
 
@@ -83,8 +90,12 @@ async function runCron(req: Request): Promise<NextResponse> {
   try {
     admin = createAdminClient();
   } catch {
+    console.error(`${LOG} misconfigured: service-role client unavailable (check SUPABASE_SERVICE_ROLE_KEY / URL)`);
     return NextResponse.json({ error: "server_not_configured" }, { status: 500 });
   }
+
+  const startedAt = Date.now();
+  console.log(`${LOG} started`);
 
   // Opted-in users with the data we need to compute their local schedule.
   const { data, error } = await admin
@@ -95,12 +106,14 @@ async function runCron(req: Request): Promise<NextResponse> {
     .not("daily_drop_time", "is", null);
 
   if (error) {
+    console.error(`${LOG} profiles query failed`);
     return NextResponse.json({ error: "profiles_query_failed" }, { status: 500 });
   }
 
   const profiles = (data ?? []) as OptedInProfile[];
   const now = new Date();
   const summary = { checked: profiles.length, attempted: 0, prepared: 0, exists: 0, failed: 0, skipped: 0, errors: [] as { userId: string; reason: string }[] };
+  console.log(`${LOG} checked=${summary.checked} opted-in profiles`);
 
   for (const p of profiles) {
     const snap = p.timezone ? localSnapshot(p.timezone, now) : null;
@@ -136,6 +149,13 @@ async function runCron(req: Request): Promise<NextResponse> {
       summary.errors.push({ userId: p.id, reason: "exception" });
     }
   }
+
+  console.log(
+    `${LOG} completed in ${Date.now() - startedAt}ms ` +
+      `checked=${summary.checked} attempted=${summary.attempted} prepared=${summary.prepared} ` +
+      `exists=${summary.exists} failed=${summary.failed} skipped=${summary.skipped}` +
+      (summary.errors.length ? ` errors=${JSON.stringify(summary.errors.map((e) => e.reason))}` : "")
+  );
 
   return NextResponse.json(summary, { status: 200 });
 }
