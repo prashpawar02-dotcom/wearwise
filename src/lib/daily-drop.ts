@@ -31,7 +31,7 @@ export type PrepareStatus = "prepared" | "exists" | "disabled" | "failed";
 export interface PrepareResult {
   status: PrepareStatus;
   localDate: string;
-  /** Machine reason for disabled/failed/exists (e.g. 'daily_drop_disabled', 'too_few_items'). */
+  /** Machine reason for disabled/failed/exists (e.g. 'daily_drop_disabled', 'too_few_wearable_items'). */
   reason?: string;
   /** Non-fatal warning (e.g. the default timezone was used because none was saved). */
   warning?: string;
@@ -77,17 +77,64 @@ function localDateISO(timezone: string | null | undefined, now: Date = new Date(
   }).format(now);
 }
 
-type Role = "top" | "bottom" | "dress" | "shoes" | "layer" | "accessory" | "other";
+// ---------------------------------------------------------------------------
+// Role classification — readable predicates over category / sub-category /
+// name / style / notes. Kept general: Western AND Indian/traditional wardrobes
+// both work; nothing here is over-fit to one culture.
+// ---------------------------------------------------------------------------
 
-/** Classify a wardrobe item into an outfit role from its category/sub-category. */
+/** All the free-text signals we can match a garment against, lower-cased. */
+function itemText(item: WardrobeItem): string {
+  return [item.user_facing_name, item.sub_category, item.category, item.style, item.notes]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function isShoeLike(t: string): boolean {
+  return /(footwear|shoe|heel|flat|sandal|loafer|mule|boot|sneaker|trainer|pump|espadrille|oxford|derby|ballet|jutti|juti|mojari|mojri|kolhapuri)/.test(t);
+}
+function isSareeLike(t: string): boolean {
+  return /(saree|sari)\b/.test(t);
+}
+function isDressLike(t: string): boolean {
+  // Western one-piece + long ethnic one-piece (anarkali, gown) that need no bottom.
+  return /(dress|gown|jumpsuit|frock|maxi|midi|bodycon|shift|anarkali)/.test(t);
+}
+function isLayerLike(t: string): boolean {
+  return /(jacket|blazer|coat|overshirt|cardigan|shrug|hoodie|sweatshirt|sweater|pullover|knit|nehru|waistcoat|gilet)/.test(t);
+}
+function isAccessoryLike(t: string): boolean {
+  return /(belt|watch|jewel|bag|clutch|earring|stud|scarf|dupatta|stole|odhani|sunglass|necklace|bangle|tie|brooch|hat|cap|pocket square)/.test(t);
+}
+function isBottomLike(t: string): boolean {
+  return /(jean|denim|trouser|chino|pant|legging|palazzo|skirt|jogger|short|dhoti|culotte|capri|bottom|salwar|churidar|patiala|ghagra|lehenga|sharara|garara)/.test(t);
+}
+function isTopLike(t: string): boolean {
+  return /(top|shirt|tee|t-?shirt|blouse|kurta|kurti|tunic|camisole|cami|crop|polo|henley|choli)/.test(t);
+}
+/** Marks an item as ethnic/traditional — used to label the outfit + add a dupatta. */
+function isTraditionalLike(t: string): boolean {
+  return /(kurta|kurti|saree|sari|lehenga|choli|anarkali|sherwani|salwar|churidar|dupatta|patiala|ghagra|kalidar|angrakha|jutti|mojari|dhoti|nehru|sharara|garara|kanjivaram|banarasi)/.test(t);
+}
+
+type Role = "top" | "bottom" | "dress" | "saree" | "shoes" | "layer" | "accessory" | "other";
+
+/**
+ * Classify a wardrobe item into an outfit role. Order matters: footwear and
+ * one-piece garments are checked before separates so, e.g., a "saree" is a core
+ * piece and "juttis" are shoes rather than being mis-bucketed.
+ */
 function roleForItem(item: WardrobeItem): Role {
-  const c = `${item.sub_category ?? ""} ${item.category ?? ""}`.toLowerCase();
-  if (/(saree|sari|gown|dress|anarkali|lehenga|jumpsuit)/.test(c)) return "dress";
-  if (/(footwear|shoe|heel|flat|sandal|loafer|mule|boot|sneaker|trainer)/.test(c)) return "shoes";
-  if (/(jean|denim|trouser|chino|pant|legging|palazzo|skirt|jogger|short|bottom)/.test(c)) return "bottom";
-  if (/(outerwear|jacket|blazer|coat|overshirt|cardigan)/.test(c)) return "layer";
-  if (/(belt|watch|accessory|jewel|bag|clutch|earring|stud|scarf|dupatta|sunglass)/.test(c)) return "accessory";
-  if (/(top|shirt|tee|t-?shirt|blouse|kurta|kurti|sweater|knit|pullover|tunic)/.test(c)) return "top";
+  const t = itemText(item);
+  if (isShoeLike(t)) return "shoes";
+  if (isSareeLike(t)) return "saree";
+  if (/(dupatta|stole|odhani)/.test(t)) return "accessory"; // traditional drape → accessory
+  if (isDressLike(t)) return "dress";
+  if (isLayerLike(t)) return "layer";
+  if (isBottomLike(t)) return "bottom";
+  if (isTopLike(t)) return "top";
+  if (isAccessoryLike(t)) return "accessory";
   return "other";
 }
 
@@ -113,56 +160,114 @@ function daysSinceWorn(item: WardrobeItem): number | null {
   return Math.floor((Date.now() - Date.parse(item.last_worn_at)) / 86_400_000);
 }
 
-interface OutfitPlan {
-  items: WardrobeItem[];
-  hasCore: boolean; // top+bottom or a dress present
+/** Natural-language join: [a] -> "a"; [a,b] -> "a and b"; [a,b,c] -> "a, b, and c". */
+function joinLabels(labels: string[]): string {
+  if (labels.length <= 1) return labels[0] ?? "";
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
 }
 
-/** Deterministically assemble one practical outfit from wearable items. */
+type CoreKind = "western" | "dress" | "traditional" | null;
+
+interface OutfitPlan {
+  items: WardrobeItem[];
+  core: CoreKind;
+  shoesAvailable: boolean;
+  shoesIncluded: boolean;
+  layerIncluded: boolean;
+}
+
+/**
+ * Deterministically assemble one practical outfit from wearable items.
+ * Handles Western (top+bottom), one-piece dresses, and traditional looks
+ * (kurta+bottom(+dupatta), saree(+blouse), lehenga+choli). Least-recently-worn
+ * pieces are preferred within each role.
+ */
 function assembleOutfit(wearable: WardrobeItem[], preferLayer: boolean): OutfitPlan {
   const buckets: Record<Role, WardrobeItem[]> = {
-    top: [], bottom: [], dress: [], shoes: [], layer: [], accessory: [], other: [],
+    top: [], bottom: [], dress: [], saree: [], shoes: [], layer: [], accessory: [], other: [],
   };
   for (const item of wearable) buckets[roleForItem(item)].push(item);
   for (const role of Object.keys(buckets) as Role[]) buckets[role].sort(byLeastRecentlyWorn);
 
   const chosen: WardrobeItem[] = [];
-  const haveTopBottom = buckets.top.length > 0 && buckets.bottom.length > 0;
+  let core: CoreKind = null;
 
-  if (haveTopBottom) {
-    chosen.push(buckets.top[0], buckets.bottom[0]);
+  if (buckets.top.length > 0 && buckets.bottom.length > 0) {
+    // Western separates OR traditional kurta+bottom (lehenga+choli lands here too).
+    const top = buckets.top[0];
+    const bottom = buckets.bottom[0];
+    chosen.push(top, bottom);
+    core = isTraditionalLike(itemText(top)) || isTraditionalLike(itemText(bottom)) ? "traditional" : "western";
   } else if (buckets.dress.length > 0) {
     chosen.push(buckets.dress[0]);
+    core = isTraditionalLike(itemText(buckets.dress[0])) ? "traditional" : "dress";
+  } else if (buckets.saree.length > 0) {
+    chosen.push(buckets.saree[0]);
+    core = "traditional";
+    if (buckets.top.length > 0) chosen.push(buckets.top[0]); // saree blouse if present
   }
 
-  const hasCore = chosen.length > 0;
-  if (hasCore) {
-    if (buckets.shoes.length > 0) chosen.push(buckets.shoes[0]);
-    if (preferLayer && buckets.layer.length > 0) chosen.push(buckets.layer[0]);
-    if (buckets.accessory.length > 0) chosen.push(buckets.accessory[0]);
-    // If we still only have a lone dress, try to round it out with a layer.
-    if (chosen.length < MIN_OUTFIT_ITEMS && buckets.layer.length > 0 && !chosen.includes(buckets.layer[0])) {
+  const shoesAvailable = buckets.shoes.length > 0;
+  let shoesIncluded = false;
+  let layerIncluded = false;
+
+  if (core) {
+    if (shoesAvailable) {
+      chosen.push(buckets.shoes[0]);
+      shoesIncluded = true;
+    }
+    // Layer only when weather suggests it (cool/rainy/windy).
+    if (preferLayer && buckets.layer.length > 0) {
       chosen.push(buckets.layer[0]);
+      layerIncluded = true;
+    }
+    // Accessory: don't force a weak one. For traditional looks, a dupatta/stole
+    // genuinely completes the outfit, so add it when present.
+    if (core === "traditional") {
+      const drape = buckets.accessory.find((a) => /(dupatta|stole|odhani)/.test(itemText(a)));
+      if (drape && !chosen.includes(drape)) chosen.push(drape);
     }
   }
 
-  return { items: chosen, hasCore };
+  return { items: chosen, core, shoesAvailable, shoesIncluded, layerIncluded };
 }
 
-/** Build honest "why it works" copy from the real chosen items + weather. */
-function buildReasoning(items: WardrobeItem[], weatherAdvice: string | null): string {
-  const labels = items.map(labelOf);
-  let base: string;
-  if (labels.length >= 2) {
-    base = `${labels[0]} with ${labels.slice(1).join(", ")} — an easy, put-together look from pieces you already own.`;
-  } else if (labels.length === 1) {
-    base = `${labels[0]} — a simple, ready-to-wear choice from your wardrobe.`;
+interface ReasoningOpts {
+  core: CoreKind;
+  weatherAvailable: boolean;
+  weatherAdvice: string | null;
+  layerIncluded: boolean;
+  shoesIncluded: boolean;
+  laundryExcluded: number;
+}
+
+/** Build honest, specific "why it works" copy from the real chosen items. */
+function buildReasoning(items: WardrobeItem[], opts: ReasoningOpts): string {
+  const list = joinLabels(items.map(labelOf));
+  const parts: string[] = [`This look pairs ${list}, all available in your wardrobe right now.`];
+
+  if (opts.weatherAvailable) {
+    if (opts.layerIncluded) {
+      parts.push(opts.weatherAdvice ? `It's cooler out, so a layer was added — ${lower(opts.weatherAdvice)}` : "It's cooler out, so a layer was added.");
+    } else if (opts.weatherAdvice) {
+      parts.push(opts.weatherAdvice);
+    }
   } else {
-    base = "A practical look from your wardrobe.";
+    parts.push("Weather isn't available right now, so this is based on your wardrobe and the day.");
   }
-  return weatherAdvice
-    ? `${base} ${weatherAdvice}`
-    : `${base} Weather is unavailable right now, so this is based on your wardrobe and the day.`;
+
+  if (!opts.shoesIncluded) {
+    parts.push("No footwear was available, so add a pair of shoes to finish it.");
+  }
+  if (opts.laundryExcluded > 0) {
+    parts.push(`${opts.laundryExcluded} item${opts.laundryExcluded === 1 ? "" : "s"} in the wash ${opts.laundryExcluded === 1 ? "was" : "were"} skipped.`);
+  }
+  return parts.join(" ");
+}
+
+function lower(s: string): string {
+  return s ? s.charAt(0).toLowerCase() + s.slice(1) : s;
 }
 
 /** One calm insight line from real signals (respects the quiet-gems preference). */
@@ -227,16 +332,14 @@ export async function prepareDailyDrop(
   // Resolve timezone honestly: use the saved zone if valid, else a fallback
   // that is flagged as a warning (never silently pretend it's reliable).
   const tzInfo = resolveTimezone(profile?.timezone);
-  const tzWarning = tzInfo.usedFallback
-    ? "timezone_missing_or_invalid_default_used"
-    : undefined;
+  const tzWarning = tzInfo.usedFallback ? "timezone_missing_or_invalid_default_used" : undefined;
   const localDate = options.localDate ?? localDateISO(profile?.timezone);
 
   if (!profile) {
     return { status: "failed", localDate, reason: "no_profile", warning: tzWarning, recommendation: null };
   }
 
-  // ---- Opt-in gate: never prepare for a disabled user ----
+  // ---- Opt-in gate: never prepare for a disabled user (wins over any cache) ----
   if (!profile.daily_drop_enabled) {
     return { status: "disabled", localDate, reason: "daily_drop_disabled", warning: tzWarning, recommendation: null };
   }
@@ -280,25 +383,29 @@ export async function prepareDailyDrop(
   };
 
   if (allItems.length === 0) {
-    return failWith("no_wardrobe", "No clothes yet — add a few pieces to get tomorrow's outfit.");
+    return failWith("no_wardrobe", "No clothes yet — add a few pieces to get your first outfit.");
   }
 
   // Exclude in-wash / unavailable and un-taggable (analyzing/failed) items.
   const wearable = allItems.filter((i) => isWearableItem(i) && isUsableItem(i));
+  const laundryExcluded = allItems.filter((i) => !isWearableItem(i)).length;
+
   if (wearable.length < MIN_OUTFIT_ITEMS) {
     return failWith(
-      "too_few_items",
-      "Not enough wearable items right now — add clothes or mark some available to improve tomorrow's pick."
+      "too_few_wearable_items",
+      "Not enough wearable items right now — add clothes or mark some available to prepare an outfit."
     );
   }
 
   // ---- Weather (only if enabled + city set; optional, never blocks) ----
   let weatherSummary: string | null = null;
   let weatherAdvice: string | null = null;
+  let weatherAvailable = false;
   let preferLayer = false;
   if (profile.weather_advice_enabled && profile.city) {
     const weather = await getWeatherContext(profile.city);
     if (weather) {
+      weatherAvailable = true;
       weatherSummary = `${weather.tempC}° · ${weather.summary}`;
       weatherAdvice = weather.advice;
       preferLayer = weather.category === "rainy" || weather.category === "windy" || weather.tempC < 20;
@@ -307,11 +414,20 @@ export async function prepareDailyDrop(
 
   // ---- Assemble a practical outfit ----
   const plan = assembleOutfit(wearable, preferLayer);
-  if (!plan.hasCore || plan.items.length < MIN_OUTFIT_ITEMS) {
+
+  if (!plan.core) {
     return failWith(
-      "too_few_items",
-      "Couldn't build a full outfit from what's available — add a top, bottom, or shoes to unlock daily picks."
+      "outfit_roles_incomplete",
+      "Couldn't build a complete outfit from what's available — add a top and a bottom, or a dress, then try again."
     );
+  }
+  if (plan.items.length < MIN_OUTFIT_ITEMS) {
+    // A lone core piece with nothing to complete it. If the only gap is shoes,
+    // say so specifically; otherwise it's a general roles gap.
+    if (!plan.shoesAvailable) {
+      return failWith("no_footwear_available", "Add a pair of shoes (or a few more pieces) to complete today's outfit.");
+    }
+    return failWith("outfit_roles_incomplete", "Add a few more wearable pieces to complete today's outfit.");
   }
 
   const rec = await upsertRecommendation(supabase, {
@@ -320,8 +436,15 @@ export async function prepareDailyDrop(
     status: "prepared",
     selected_item_ids: plan.items.map((i) => i.id),
     weather_summary: weatherSummary,
-    occasion_context: "daily",
-    reasoning: buildReasoning(plan.items, weatherAdvice),
+    occasion_context: plan.core === "traditional" ? "traditional" : "daily",
+    reasoning: buildReasoning(plan.items, {
+      core: plan.core,
+      weatherAvailable,
+      weatherAdvice,
+      layerIncluded: plan.layerIncluded,
+      shoesIncluded: plan.shoesIncluded,
+      laundryExcluded,
+    }),
     daily_insight: buildInsight(plan.items, profile.show_quiet_gems),
     fail_reason: null,
   });

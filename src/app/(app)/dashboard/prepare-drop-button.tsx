@@ -29,6 +29,14 @@ const MSG_WARDROBE = "Add a few clothes or mark items available to prepare bette
 const MSG_GENERIC = "We couldn't prepare today's outfit just now. Please try again in a moment.";
 const TIP_TIMEZONE = "Tip: save your Daily Drop preferences in You to improve timing.";
 
+// Fail reasons that mean "your wardrobe needs a little more to work with".
+const WARDROBE_REASONS = new Set([
+  "no_wardrobe",
+  "too_few_wearable_items",
+  "no_footwear_available",
+  "outfit_roles_incomplete",
+]);
+
 export function PrepareDropButton({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -59,7 +67,7 @@ export function PrepareDropButton({ compact = false }: { compact?: boolean }) {
 
       if (status === "disabled") {
         setMessage(MSG_DISABLED);
-      } else if (fail === "no_wardrobe" || fail === "too_few_items") {
+      } else if (fail && WARDROBE_REASONS.has(fail)) {
         setMessage(MSG_WARDROBE);
       } else {
         setMessage(MSG_GENERIC);
