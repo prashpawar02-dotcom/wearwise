@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getWeatherContext } from "@/lib/weather";
 import { isWearableItem } from "@/lib/wardrobe";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Daily Outfit Drop — server-side prepare + cache (Phase 2).
@@ -38,7 +39,10 @@ export interface PrepareResult {
   recommendation: DailyRecommendation | null;
 }
 
-type SupabaseServerClient = ReturnType<typeof createClient>;
+// Either the session-scoped SSR client (manual/authenticated flow) or the
+// service-role admin client (server-controlled cron flow). Both expose the same
+// query surface used here; all queries are explicitly scoped by user_id.
+type DbClient = SupabaseClient;
 
 /** True if `tz` is a valid IANA timezone the runtime understands. */
 function isValidTimeZone(tz: string): boolean {
@@ -301,7 +305,7 @@ interface UpsertInput {
 }
 
 async function upsertRecommendation(
-  supabase: SupabaseServerClient,
+  supabase: DbClient,
   input: UpsertInput
 ): Promise<DailyRecommendation | null> {
   // Reset lifecycle timestamps: a freshly (re)prepared or failed row is a new
@@ -320,9 +324,19 @@ async function upsertRecommendation(
 
 export async function prepareDailyDrop(
   userId: string,
-  options: { localDate?: string; force?: boolean } = {}
+  options: {
+    localDate?: string;
+    force?: boolean;
+    /** Injected client: session client for manual, admin client for cron. */
+    supabase?: DbClient;
+    /** Provenance, for logging/analytics later. Does not change behavior. */
+    source?: "manual" | "cron";
+  } = {}
 ): Promise<PrepareResult> {
-  const supabase = createClient();
+  // Default to the session-scoped server client (manual/authenticated path).
+  // The cron path injects the service-role admin client. Either way, every
+  // query below is explicitly scoped by userId.
+  const supabase: DbClient = options.supabase ?? (createClient() as unknown as DbClient);
   const force = options.force ?? false;
 
   // ---- Load profile (drives timezone, opt-in, weather + quiet-gem prefs) ----

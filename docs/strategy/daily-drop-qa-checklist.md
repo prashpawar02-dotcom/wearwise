@@ -96,14 +96,49 @@ screen once (captures the browser timezone) to clear it.
 - No service-role client is used anywhere in this flow.
 - The prepare route never accepts a `user_id` from the client.
 
+## Scheduled preparation (Phase 3A — server-controlled, no notifications)
+
+Required migrations: 0008, 0009, **0010** (0010 removes the client insert-own
+policy; inserts are now server-only via the service role).
+
+Required env: `SUPABASE_SERVICE_ROLE_KEY` (server-only) and `CRON_SECRET`. Set
+the service-role key **before** applying 0010, or prepare will be blocked.
+
+Route: `GET|POST /api/cron/daily-drop/prepare` (Vercel Cron uses GET). Runs
+every 30 min per `vercel.json`. It PREPARES drops only — it sends nothing.
+
+Test — unauthorized (no/wrong secret) → **401**:
+```bash
+curl -i -X POST https://YOUR-APP/api/cron/daily-drop/prepare
+curl -i -X POST https://YOUR-APP/api/cron/daily-drop/prepare \
+  -H "Authorization: Bearer wrong-secret"
+```
+
+Test — authorized → **200** with a counts summary:
+```bash
+curl -s -X POST https://YOUR-APP/api/cron/daily-drop/prepare \
+  -H "Authorization: Bearer $CRON_SECRET" | jq
+# { "checked": N, "attempted": N, "prepared": N, "exists": N,
+#   "failed": N, "skipped": N, "errors": [ { "userId": "…", "reason": "…" } ] }
+```
+(No wardrobe metadata is returned — counts + minimal error info only.)
+
+Verify **one row per user/date**: run the authorized call twice within the same
+local day. The second run should increment `exists`, not `prepared`, and the DB
+must still hold a single `daily_recommendations` row for that `(user_id,
+local_date)` (enforced by the unique constraint + upsert).
+
+Verify **time-window skipping**: a user whose local time is NOT within
+`[daily_drop_time, daily_drop_time + 30min)` on an active weekday counts toward
+`skipped`, and no row is prepared for them. Users on an inactive weekday
+(`daily_drop_days`) are also skipped.
+
+Note: **notifications are still not live.** The cron only prepares/caches drops;
+the Today dashboard shows them when the user opens the app.
+
 ## Known NOT live (future phases)
 
-- Cron / scheduled preparation (Phase 3).
 - Push notifications, web push, email, PWA service worker, any provider (Phase 4).
-- "Skip" / "Swap one item" actions (Phase 3).
-
-## Pre-cron TODO
-
-Before a scheduled job goes live, the `dailyrec_insert_own` policy should be
-narrowed so prepared inserts are server-controlled (service role) rather than
-client-session inserts. See the note in `0009_daily_recommendations.sql`.
+- "Skip" / "Swap one item" actions.
+- Local-time window wraparound across midnight (drop times near 23:30–23:59 may
+  miss the window on a 30-min cadence — acceptable for beta; revisit later).
