@@ -470,3 +470,65 @@ export async function prepareDailyDrop(
 
   return { status: "prepared", localDate, warning: tzWarning, recommendation: rec };
 }
+
+// ===================== Daily Drop actions (Phase 1 habit engine) =====================
+
+/** Public role label for an item (used by swap matching + analytics). */
+export function garmentRole(item: WardrobeItem): string {
+  return roleForItem(item);
+}
+
+/** Honest, fixed copy for a one-item swap. */
+export const SWAP_REASONING =
+  "Swapped one piece while keeping the outfit weather-ready and repeat-safe.";
+
+/** Honest, fixed copy for a regenerated alternative. */
+export const ANOTHER_OPTION_REASONING =
+  "Another take from your available wardrobe, favouring pieces you haven't worn recently.";
+
+/**
+ * Replacement candidates for one item: same role, wearable + usable, not already
+ * in the outfit, least-recently-worn first, capped at `limit`.
+ */
+export function swapCandidates(
+  allItems: WardrobeItem[],
+  selectedIds: string[],
+  replaceItem: WardrobeItem,
+  limit = 5
+): WardrobeItem[] {
+  const role = roleForItem(replaceItem);
+  const selected = new Set(selectedIds);
+  return allItems
+    .filter(
+      (i) =>
+        isWearableItem(i) &&
+        isUsableItem(i) &&
+        i.id !== replaceItem.id &&
+        !selected.has(i.id) &&
+        roleForItem(i) === role
+    )
+    .sort(byLeastRecentlyWorn)
+    .slice(0, Math.max(0, limit));
+}
+
+/**
+ * A second deterministic outfit that shares NO item with `avoidIds`. Returns the
+ * chosen items, or null when the remaining wearable pool can't form a full look.
+ */
+export function alternativeOutfitItems(
+  allItems: WardrobeItem[],
+  avoidIds: string[],
+  preferLayer: boolean
+): WardrobeItem[] | null {
+  const avoid = new Set(avoidIds);
+  const pool = allItems.filter((i) => isWearableItem(i) && isUsableItem(i) && !avoid.has(i.id));
+  const plan = assembleOutfit(pool, preferLayer);
+  if (!plan.core || plan.items.length < MIN_OUTFIT_ITEMS) return null;
+  return plan.items;
+}
+
+/** Compute the weather-driven layer preference for a user (server-side, optional). */
+export function preferLayerFor(category: string | null | undefined, tempC: number | null | undefined): boolean {
+  if (!category || tempC == null) return false;
+  return category === "rainy" || category === "windy" || tempC < 20;
+}
