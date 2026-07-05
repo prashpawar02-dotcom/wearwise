@@ -21,6 +21,7 @@ export interface DailyDropItemView {
   label: string;
   sub: string | null;
   image: string | null;
+  lastWornAt: string | null;
 }
 
 export interface DailyDropView {
@@ -35,6 +36,30 @@ export interface DailyDropView {
 }
 
 type Candidate = { id: string; label: string; sub: string | null; image: string | null };
+type RepeatStatus = "no_history" | "repeat_safe" | "one_recent" | "multiple_recent";
+
+const RECENT_DAYS = 7;
+
+function daysSince(d: string | null): number | null {
+  if (!d) return null;
+  const ms = Date.now() - Date.parse(d);
+  return Number.isNaN(ms) ? null : Math.floor(ms / 86_400_000);
+}
+function wornRecently(d: string | null): boolean {
+  const n = daysSince(d);
+  return n !== null && n <= RECENT_DAYS;
+}
+function itemDetailText(d: string | null): string {
+  if (!d) return "No wear history yet";
+  return wornRecently(d) ? "Worn recently" : "Not worn recently";
+}
+
+const REPEAT_COPY: Record<RepeatStatus, string> = {
+  no_history: "Fresh pick: no recent wear history yet",
+  repeat_safe: "Repeat-safe: none of these were worn in the last 7 days",
+  one_recent: "One repeat: one piece was worn recently",
+  multiple_recent: "Repeat warning: a few pieces were worn recently",
+};
 
 export function DailyDropCard({ drop }: { drop: DailyDropView }) {
   const router = useRouter();
@@ -50,6 +75,24 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
   const [updating, setUpdating] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
+  // ---- Trust signals (derived from the selected items' wear history) ----
+  const withHistory = drop.items.filter((i) => i.lastWornAt);
+  const recentCount = drop.items.filter((i) => wornRecently(i.lastWornAt)).length;
+  const repeatStatus: RepeatStatus =
+    withHistory.length === 0
+      ? "no_history"
+      : recentCount === 0
+        ? "repeat_safe"
+        : recentCount === 1
+          ? "one_recent"
+          : "multiple_recent";
+  const layerHint = Boolean(drop.weatherSummary && drop.reasoning && /layer/i.test(drop.reasoning));
+  const weatherLine = drop.weatherSummary
+    ? layerHint
+      ? "Layer suggested for cooler weather"
+      : "Works for your city weather"
+    : "Weather unavailable";
+
   // Fire once when a prepared drop is shown. Non-sensitive: status + counts only.
   useEffect(() => {
     track("daily_drop_viewed", {
@@ -57,7 +100,13 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
       item_count: drop.items.length,
       weather_available: Boolean(drop.weatherSummary),
     });
-  }, [drop.id, drop.status, drop.items.length, drop.weatherSummary]);
+    track("daily_drop_trust_signals_viewed", {
+      repeat_status: repeatStatus,
+      selected_item_count: drop.items.length,
+      has_weather_summary: Boolean(drop.weatherSummary),
+      has_daily_insight: Boolean(drop.dailyInsight),
+    });
+  }, [drop.id, drop.status, drop.items.length, drop.weatherSummary, drop.dailyInsight, repeatStatus]);
 
   async function wearThis() {
     setSaving(true);
@@ -216,24 +265,30 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
         )}
       </div>
 
-      {/* Item list */}
+      {/* Item list — each with a subtle wear-history detail */}
       <ul className="space-y-1.5">
         {drop.items.map((it) => (
           <li key={it.id} className="flex items-baseline justify-between gap-3 text-sm">
-            <span className="text-charcoal">{it.label}</span>
+            <span className="min-w-0">
+              <span className="text-charcoal">{it.label}</span>
+              <span className="block text-[11px] text-mist">{itemDetailText(it.lastWornAt)}</span>
+            </span>
             {it.sub && <span className="shrink-0 text-xs text-graphite">{it.sub}</span>}
           </li>
         ))}
       </ul>
 
-      {/* Weather line (honest — only present when weather was available) */}
-      {drop.weatherSummary && (
-        <p className="mt-3 flex items-center gap-1.5 text-xs text-graphite">
-          <Icon.Sun className="h-3.5 w-3.5 shrink-0 text-champagne" /> {drop.weatherSummary}
-        </p>
-      )}
+      {/* Why-line: weather · freshness · wardrobe (calm, no certainty claims) */}
+      <div className="mt-3 space-y-1.5 rounded-ww-md border border-hairline bg-bone p-3">
+        <WhyLine icon={<Icon.Sun className="h-3.5 w-3.5 text-champagne" />} text={weatherLine} />
+        <WhyLine
+          icon={<Icon.Check className={`h-3.5 w-3.5 ${repeatStatus === "multiple_recent" ? "text-terracotta" : "text-sage"}`} />}
+          text={REPEAT_COPY[repeatStatus]}
+        />
+        <WhyLine icon={<Icon.Hanger className="h-3.5 w-3.5 text-plum" />} text="Uses available clothes only" />
+      </div>
 
-      {/* Why it works */}
+      {/* Why it works (stylist reasoning) */}
       {drop.reasoning && (
         <div className="mt-3 rounded-ww-md border border-lavender/40 bg-lavender/[0.12] p-3">
           <p className="ww-eyebrow text-plum">Why this works</p>
@@ -334,5 +389,14 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
         </div>
       )}
     </Card>
+  );
+}
+
+function WhyLine({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return (
+    <p className="flex items-center gap-2 text-xs text-charcoal">
+      <span aria-hidden="true" className="shrink-0">{icon}</span>
+      {text}
+    </p>
   );
 }

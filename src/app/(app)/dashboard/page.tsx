@@ -621,6 +621,7 @@ async function loadTodayDrop(
       label: m.user_facing_name ?? m.category ?? "Item",
       sub: [m.category, m.color].filter(Boolean).join(" · ") || null,
       image: urls[m.image_path] ?? null,
+      lastWornAt: m.last_worn_at,
     }));
 
   // If every item from today's pick has since been deleted, don't show an empty
