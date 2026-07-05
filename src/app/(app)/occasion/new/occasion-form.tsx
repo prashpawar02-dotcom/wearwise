@@ -103,7 +103,11 @@ export function OccasionForm({
       .select("id")
       .single();
 
-    if (insErr || !data) { setError(insErr?.message ?? "Something went wrong."); setSaving(false); return; }
+    if (insErr || !data) {
+      setError("We couldn't start your outfit request. Please try again in a moment.");
+      setSaving(false);
+      return;
+    }
     router.push(`/outfits/${data.id}`);
     router.refresh();
   }

@@ -46,11 +46,12 @@ export function ItemView({ item: initial, imageUrl }: { item: WardrobeItem; imag
     })();
   }, [item.id, item.ai_tag_status, supabase]);
 
+  const imageAlt = item.user_facing_name ?? item.category ?? "Wardrobe item";
   const image = (
     <div className="mx-auto aspect-[3/4] w-2/3 overflow-hidden rounded-xl border border-border bg-muted">
       {imageUrl && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+        <img src={imageUrl} alt={imageAlt} className="h-full w-full object-cover" />
       )}
     </div>
   );
