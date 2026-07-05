@@ -104,8 +104,11 @@ policy; inserts are now server-only via the service role).
 Required env: `SUPABASE_SERVICE_ROLE_KEY` (server-only) and `CRON_SECRET`. Set
 the service-role key **before** applying 0010, or prepare will be blocked.
 
-Route: `GET|POST /api/cron/daily-drop/prepare` (Vercel Cron uses GET). Runs
-every 30 min per `vercel.json`. It PREPARES drops only — it sends nothing.
+Route: `GET|POST /api/cron/daily-drop/prepare` (Vercel Cron uses GET). Scheduled
+via `vercel.json`. On **Vercel Hobby** crons run **once per day only**, so the
+schedule is `30 1 * * *` (01:30 UTC ≈ 07:00 AM IST). It PREPARES drops only — it
+sends nothing. Custom-time precision (a finer cadence like every 30 min) needs
+Vercel Pro or an external scheduler; the custom-time UI is kept for that later.
 
 Test — unauthorized (no/wrong secret) → **401**:
 ```bash

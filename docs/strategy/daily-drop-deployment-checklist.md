@@ -27,10 +27,20 @@ Set `SUPABASE_SERVICE_ROLE_KEY` **before** applying migration 0010.
 
 `vercel.json` (already in repo):
 ```json
-{ "crons": [ { "path": "/api/cron/daily-drop/prepare", "schedule": "*/30 * * * *" } ] }
+{ "crons": [ { "path": "/api/cron/daily-drop/prepare", "schedule": "30 1 * * *" } ] }
 ```
-Vercel Cron issues a GET every 30 minutes and adds `Authorization: Bearer
+Vercel Cron issues a GET on this schedule and adds `Authorization: Bearer
 <CRON_SECRET>` automatically when `CRON_SECRET` is set.
+
+**Vercel Hobby plan limitation:** Hobby allows crons to run **once per day only**,
+so the schedule is `30 1 * * *` (01:30 UTC ≈ 07:00 AM IST) — one run per day.
+Because the cron still only prepares users whose *local* time falls in the run
+window, a single daily run best serves users near ~7:00 AM IST; users with very
+different custom times won't be prepared on the day their time falls outside the
+run window. **Custom-time precision (e.g. the every-30-min cadence) requires the
+Vercel Pro plan or an external scheduler** (e.g. GitHub Actions / cron-job.org
+hitting the same secret-protected route). The custom-time UI is kept as-is for
+when that upgrade happens.
 
 ## 4. Pre-deploy checks
 
