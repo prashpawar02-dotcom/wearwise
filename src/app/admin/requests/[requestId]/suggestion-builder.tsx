@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/analytics";
 import type { OutfitSuggestion, OutfitSuggestionFeedback, WardrobeItem } from "@/lib/types";
 import { Check, Trash2, Sparkles, Loader2, AlertCircle, Plus, Copy, X } from "lucide-react";
 import { validateOutfitItems, roleForItem } from "@/lib/outfitValidation";
@@ -47,6 +48,7 @@ export function SuggestionBuilder({
     if (existing.length > 0 && !confirm("Replace the current draft suggestions with fresh AI drafts? Approved looks are kept.")) return;
     setGenerating(true);
     setGenMsg(null);
+    track("admin_ai_retry_clicked", { source: "suggestion_builder" });
     try {
       const res = await fetch(`/api/outfit-requests/${requestId}/generate-drafts`, { method: "POST" });
       const data = await res.json().catch(() => ({ status: "error" }));
@@ -243,7 +245,11 @@ function DraftCard({
     try {
       const res = await fetch(`/api/outfit-suggestions/${s.id}/approve`, { method: "POST" });
       const data = await res.json().catch(() => ({ status: "error" }));
-      if (res.ok && data.status === "ok") { router.refresh(); return; }
+      if (res.ok && data.status === "ok") {
+        track("admin_outfit_approved", { request_status: s.status });
+        router.refresh();
+        return;
+      }
       if (res.status === 422) setActionError(data.reason ?? "This outfit can't be approved.");
       else if (res.status === 401 || res.status === 403) setActionError("You don't have permission to approve this look.");
       else setActionError("Couldn't approve right now. Please try again.");
@@ -259,8 +265,10 @@ function DraftCard({
     setActionError(null);
     try {
       const res = await fetch(`/api/outfit-suggestions/${s.id}/reject`, { method: "POST" });
-      if (res.ok) router.refresh();
-      else setActionError("Couldn't reject right now. Please try again.");
+      if (res.ok) {
+        track("admin_outfit_rejected", { reason_present: false });
+        router.refresh();
+      } else setActionError("Couldn't reject right now. Please try again.");
     } catch {
       setActionError("Couldn't reject right now. Please try again.");
     } finally {

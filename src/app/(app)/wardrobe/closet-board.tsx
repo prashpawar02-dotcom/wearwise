@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { track } from "@/lib/analytics";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
@@ -52,6 +53,17 @@ export function ClosetBoard({
   const notAvailable = useMemo(() => items.filter((i) => statusOf(i) !== "available"), [items]);
   const unavailableCount = notAvailable.length - inWash.length;
   const needsReview = useMemo(() => items.filter((i) => i.ai_tag_status === "needs_review"), [items]);
+
+  // Fire once per board view. Counts only — no item names/images.
+  useEffect(() => {
+    track("closet_board_viewed", {
+      total_items: items.length,
+      available_items: wearable.length,
+      in_wash_items: inWash.length,
+      needs_review_items: needsReview.length,
+    });
+    // Depend on the counts so navigating back with changed data re-reports.
+  }, [items.length, wearable.length, inWash.length, needsReview.length]);
 
   // Per-zone buckets (available items feed the board; all items feed filters/counts).
   const zones = useMemo(() => {
@@ -531,6 +543,8 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
       .update({ availability_status: next })
       .eq("id", item.id)
       .eq("user_id", user.id);
+    // Status codes only — no item identity.
+    track("wardrobe_availability_changed", { from_status: status, to_status: next });
     setBusy(false);
     router.refresh();
   }

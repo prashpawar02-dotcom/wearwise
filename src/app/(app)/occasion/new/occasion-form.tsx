@@ -11,6 +11,7 @@ import { Icon, type IconProps } from "@/components/ui/Icon";
 import type { Occasion } from "@/lib/types";
 import type { WeatherContext } from "@/lib/weather";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/analytics";
 
 // Minimum wardrobe items before outfit generation is useful (matches the
 // generate-drafts API). Kept local to avoid importing server-side helpers.
@@ -92,6 +93,8 @@ export function OccasionForm({
   async function submitWith(occ: Occasion, tag: string | null) {
     setSaving(true);
     setError("");
+    // Occasion enum only — never the free-text note.
+    track("style_me_started", { occasion: occ });
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
@@ -104,10 +107,16 @@ export function OccasionForm({
       .single();
 
     if (insErr || !data) {
+      track("outfit_request_failed", { reason: "insert_failed" });
       setError("We couldn't start your outfit request. Please try again in a moment.");
       setSaving(false);
       return;
     }
+    track("outfit_request_created", {
+      occasion: occ,
+      wearable_item_count: wearableCount,
+      weather_available: Boolean(weather),
+    });
     router.push(`/outfits/${data.id}`);
     router.refresh();
   }

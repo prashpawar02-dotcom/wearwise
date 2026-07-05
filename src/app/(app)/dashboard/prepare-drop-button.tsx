@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { track } from "@/lib/analytics";
 
 /**
  * Manual Daily Outfit Drop prepare — PRIVATE BETA TESTING ONLY.
@@ -47,6 +48,7 @@ export function PrepareDropButton({ compact = false }: { compact?: boolean }) {
     setLoading(true);
     setMessage(null);
     setTip(null);
+    track("daily_drop_prepare_clicked", { source: "dashboard_beta_button" });
     try {
       const res = await fetch("/api/daily-drop/prepare", {
         method: "POST",
@@ -56,6 +58,8 @@ export function PrepareDropButton({ compact = false }: { compact?: boolean }) {
       const data: PrepareResponse = await res.json().catch(() => ({}));
       const status = data.status;
       const fail = data.failReason ?? data.reason ?? null;
+      // Non-sensitive outcome only: status + reason/warning codes.
+      track("daily_drop_prepare_result", { status: status ?? "unknown", fail_reason: fail, warning: data.warning ?? null });
 
       // Prepared / already exists, or a failure that WROTE a row (too few items,
       // no wardrobe): let the dashboard re-read and render the card or the

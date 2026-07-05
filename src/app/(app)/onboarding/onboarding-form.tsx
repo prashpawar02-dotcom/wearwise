@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/analytics";
 
 const AGE_RANGES = ["22-25", "26-30", "31-35", "36-40"];
 const STYLES = ["Minimal", "Traditional", "Bold", "Elegant", "Trendy", "Comfort-first"];
@@ -48,9 +49,14 @@ export function OnboardingForm({
       .eq("id", user.id);
 
     if (error) {
-      setError(error.message);
+      setError("We couldn't save your details. Please try again in a moment.");
       setSaving(false);
     } else {
+      // Non-sensitive: whether a city was given + how many style tags (no values).
+      track("onboarding_completed", {
+        city_present: Boolean(city.trim()),
+        style_preferences_count: styles.length,
+      });
       router.push("/dashboard");
       router.refresh();
     }

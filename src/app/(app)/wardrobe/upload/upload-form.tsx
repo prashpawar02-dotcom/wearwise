@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AUTOTAG_PRIVACY_COPY } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/analytics";
 import { Camera, Sparkles, Check, AlertCircle, Loader2, X, Lock } from "lucide-react";
 
 const MAX_BATCH = 10;
@@ -77,6 +78,8 @@ export function UploadForm() {
       if (insErr || !row) throw new Error("insert");
 
       patch(item.localId, { status: "analyzing", itemId: row.id });
+      // Non-sensitive: signals an item was uploaded (no path/URL/name).
+      track("wardrobe_item_uploaded", { category: null, source: "upload" });
 
       // Reuse the existing server-side auto-tagging route (key stays server-only).
       const res = await fetch(`/api/wardrobe/${row.id}/autotag`, { method: "POST" });
@@ -85,6 +88,9 @@ export function UploadForm() {
         json.status === "tagged" ? "ready" :
         json.status === "needs_review" ? "needs_review" : "failed";
       patch(item.localId, { status: s });
+      track("wardrobe_item_tagged", {
+        status: s === "ready" ? "success" : s === "needs_review" ? "needs_review" : "failed",
+      });
     } catch {
       patch(item.localId, { status: "failed" });
     }

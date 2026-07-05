@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/button";
+import { track } from "@/lib/analytics";
 
 /**
  * Today's Drop card — renders a prepared daily_recommendation on the dashboard.
@@ -38,6 +39,15 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
   const [saving, setSaving] = useState(false);
   const [worn, setWorn] = useState(drop.status === "worn");
 
+  // Fire once when a prepared drop is shown. Non-sensitive: status + counts only.
+  useEffect(() => {
+    track("daily_drop_viewed", {
+      status: drop.status === "failed" ? "failed" : "prepared",
+      item_count: drop.items.length,
+      weather_available: Boolean(drop.weatherSummary),
+    });
+  }, [drop.id, drop.status, drop.items.length, drop.weatherSummary]);
+
   async function wearThis() {
     setSaving(true);
     const supabase = createClient();
@@ -55,6 +65,8 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
     if (drop.itemIds.length) {
       await supabase.from("wardrobe_items").update({ last_worn_at: today }).in("id", drop.itemIds);
     }
+
+    track("daily_drop_worn", { item_count: drop.itemIds.length });
 
     setWorn(true);
     setSaving(false);

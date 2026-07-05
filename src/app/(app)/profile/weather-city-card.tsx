@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/Icon";
+import { track } from "@/lib/analytics";
 
 /**
  * Weather city — persisted to the authenticated user's own profile row
@@ -34,6 +35,8 @@ export function WeatherCityCard({ initialCity }: { initialCity: string | null })
 
     if (upErr) { setStatus("error"); setError("Couldn't save your city. Please try again."); return; }
     setCity(trimmed);
+    // Only whether a city is present — never the city value itself.
+    track("weather_city_saved", { city_present: trimmed.length > 0 });
     setStatus("saved");
   }
 

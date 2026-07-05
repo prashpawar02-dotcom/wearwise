@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/Icon";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/analytics";
 
 /**
  * Daily Outfit Drop preferences — PERSISTED to the authenticated user's own
@@ -223,6 +224,15 @@ export function DailyDropPreferences({ initial }: { initial: DailyDropPrefsInput
       // Dev-only sanity check (no secrets, no user id).
       console.log("[daily-drop] saved", { enabled: row.daily_drop_enabled, time: row.daily_drop_time });
     }
+
+    // Non-sensitive preference snapshot (booleans + mode only).
+    track("daily_drop_preferences_saved", {
+      enabled: Boolean(row.daily_drop_enabled),
+      days_mode: (row.daily_drop_days?.length ?? 7) >= 7 ? "every_day" : "weekdays",
+      weather_advice_enabled: Boolean(row.weather_advice_enabled),
+      quiet_gems_enabled: Boolean(row.show_quiet_gems),
+      custom_time: !TIME_PRESETS.includes(toHHMM(row.daily_drop_time)),
+    });
 
     setStatus("saved");
     // Keep server-rendered profile props in sync for the next navigation.

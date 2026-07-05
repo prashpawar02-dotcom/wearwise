@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ItemEditor } from "./item-editor";
 import { OCCASIONS, AUTOTAG_PRIVACY_COPY, type Occasion, type WardrobeItem } from "@/lib/types";
+import { track } from "@/lib/analytics";
 import { Sparkles, AlertCircle, Check, Pencil } from "lucide-react";
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
@@ -41,6 +42,14 @@ export function ItemView({ item: initial, imageUrl }: { item: WardrobeItem; imag
         const fresh = data as WardrobeItem;
         setItem(fresh);
         setMode(fresh.ai_tag_status === "failed" ? "edit" : "card");
+        track("wardrobe_item_tagged", {
+          status:
+            fresh.ai_tag_status === "failed"
+              ? "failed"
+              : fresh.ai_tag_status === "needs_review"
+                ? "needs_review"
+                : "success",
+        });
       }
       setPhase("ready");
     })();
