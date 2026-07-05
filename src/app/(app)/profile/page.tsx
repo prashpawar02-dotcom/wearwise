@@ -66,6 +66,18 @@ export default async function ProfilePage() {
           }}
         />
 
+        {/* Give feedback — private beta */}
+        <Card className="p-4">
+          <p className="ww-eyebrow text-plum">Give feedback</p>
+          <p className="mt-1 text-sm text-graphite">Tell us what felt confusing, broken, or useful.</p>
+          <Link
+            href="/profile/feedback?from=profile"
+            className="mt-3 inline-flex min-h-[24px] items-center gap-1.5 text-sm font-medium text-plum hover:underline"
+          >
+            Share feedback <Icon.ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </Card>
+
         {/* Privacy */}
         <Card className="p-4">
           <p className="ww-eyebrow text-plum">Privacy</p>
