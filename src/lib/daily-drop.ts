@@ -302,6 +302,9 @@ interface UpsertInput {
   reasoning: string | null;
   daily_insight: string | null;
   fail_reason: string | null;
+  /** Pre-computed "another option" candidates (Module B cache; ids only). */
+  alt_item_ids?: string[][];
+  alt_cursor?: number;
 }
 
 async function upsertRecommendation(
@@ -444,11 +447,27 @@ export async function prepareDailyDrop(
     return failWith("outfit_roles_incomplete", "Add a few more wearable pieces to complete today's outfit.");
   }
 
+  // ---- Module B: pre-compute "another option" candidates in the SAME pass
+  // so swaps/options later read this cache instead of recomputing or ever
+  // touching the LLM. Up to 2 alternatives, none sharing items with earlier picks.
+  const altSets: string[][] = [];
+  {
+    let avoid = plan.items.map((i) => i.id);
+    for (let k = 0; k < 2; k++) {
+      const alt = alternativeOutfitItems(allItems, avoid, preferLayer);
+      if (!alt) break;
+      altSets.push(alt.map((i) => i.id));
+      avoid = [...avoid, ...alt.map((i) => i.id)];
+    }
+  }
+
   const rec = await upsertRecommendation(supabase, {
     user_id: userId,
     local_date: localDate,
     status: "prepared",
     selected_item_ids: plan.items.map((i) => i.id),
+    alt_item_ids: altSets,
+    alt_cursor: 0,
     weather_summary: weatherSummary,
     occasion_context: plan.core === "traditional" ? "traditional" : "daily",
     reasoning: buildReasoning(plan.items, {

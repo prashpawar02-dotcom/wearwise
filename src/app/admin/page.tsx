@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { AppHeader } from "@/components/nav/app-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { Users, ListChecks, LineChart } from "lucide-react";
+import { Users, ListChecks, LineChart, SlidersHorizontal } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,21 @@ export default async function AdminHome() {
         </p>
 
         <div className="mt-6 space-y-3">
+          <Link href="/admin/controls">
+            <Card>
+              <CardContent className="flex items-center justify-between py-5">
+                <div className="flex items-center gap-3">
+                  <SlidersHorizontal className="h-5 w-5 text-champagne" />
+                  <div>
+                    <p className="font-medium">Feature controls</p>
+                    <p className="text-sm text-muted-foreground">Auto ↔ Human · kill-switches · AI budget</p>
+                  </div>
+                </div>
+                <span className="text-muted-foreground">&rarr;</span>
+              </CardContent>
+            </Card>
+          </Link>
+
           <Link href="/admin/requests">
             <Card>
               <CardContent className="flex items-center justify-between py-5">

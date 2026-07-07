@@ -117,6 +117,23 @@ export function OccasionForm({
       wearable_item_count: wearableCount,
       weather_available: Boolean(weather),
     });
+
+    // Human-less generation (Module A): kick off auto-generation now so
+    // validated looks are ready when the outfits page loads. The server
+    // enforces flags + entitlements; a locked occasion routes to /upgrade.
+    try {
+      const resp = await fetch(`/api/outfit-requests/${data.id}/generate`, { method: "POST" });
+      const gen = (await resp.json()) as { status?: string };
+      if (resp.status === 402 || gen.status === "upgrade_required") {
+        track("paywall_hit", { source: "occasion_locked", occasion: occ });
+        router.push("/upgrade?from=occasion");
+        return;
+      }
+      track("outfits_generation_result", { status: gen.status ?? "unknown", occasion: occ });
+    } catch {
+      // Non-fatal: the outfits page shows the "being prepared" state.
+    }
+
     router.push(`/outfits/${data.id}`);
     router.refresh();
   }

@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 
-const AGE_RANGES = ["22-25", "26-30", "31-35", "36-40"];
+const AGE_RANGES = ["18-21", "22-25", "26-30", "31-35", "36-40", "40+"];
 const STYLES = ["Minimal", "Traditional", "Bold", "Elegant", "Trendy", "Comfort-first"];
+const REMINDER_TIMES = ["06:30", "07:00", "07:30", "08:00", "08:30"];
 
 export function OnboardingForm({
   initial,
@@ -22,6 +23,7 @@ export function OnboardingForm({
   const [ageRange, setAgeRange] = useState(initial.age_range);
   const [city, setCity] = useState(initial.city);
   const [styles, setStyles] = useState<string[]>(initial.style_preferences);
+  const [reminderTime, setReminderTime] = useState("07:30");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -45,6 +47,10 @@ export function OnboardingForm({
         city: city || null,
         style_preferences: styles,
         onboarded: true,
+        // Module D: morning reminder time + device timezone captured up front
+        // so the Daily Drop + morning push land at the right local moment.
+        daily_drop_time: reminderTime,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata",
       })
       .eq("id", user.id);
 
@@ -110,6 +116,26 @@ export function OnboardingForm({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>When should your outfit be ready each morning?</Label>
+        <div className="grid grid-cols-5 gap-2">
+          {REMINDER_TIMES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setReminderTime(t)}
+              className={cn(
+                "rounded-lg border px-1 py-2.5 text-sm tabular-nums transition-colors",
+                reminderTime === t ? "border-plum bg-plum/10 text-plum" : "border-border bg-card"
+              )}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">One gentle reminder a day — you can change or turn it off anytime.</p>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

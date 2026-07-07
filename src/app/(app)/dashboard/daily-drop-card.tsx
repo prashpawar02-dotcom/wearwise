@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/button";
+import { SaveLookButton } from "@/components/wearwise/SaveLookButton";
 import { track } from "@/lib/analytics";
 
 /**
@@ -128,6 +129,10 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
 
     track("daily_drop_worn", { item_count: drop.itemIds.length });
 
+    // Habit loop (Module C): logging an outfit feeds the streak. Fire and
+    // forget — idempotent per day on the server, must never block the action.
+    fetch("/api/streaks/checkin", { method: "POST" }).catch(() => {});
+
     setWorn(true);
     setSaving(false);
     router.refresh();
@@ -179,6 +184,11 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
         body: JSON.stringify({ recommendationId: drop.id, replaceItemId, replacementItemId }),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 402 || data.status === "upgrade_required") {
+        track("paywall_hit", { source: "swap_locked" });
+        router.push("/upgrade?from=swap");
+        return;
+      }
       if (data.status === "updated") {
         track("daily_drop_swap_completed", {
           status: "updated",
@@ -212,6 +222,11 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
         body: JSON.stringify({ recommendationId: drop.id }),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 402 || data.status === "upgrade_required") {
+        track("paywall_hit", { source: "another_option_locked" });
+        router.push("/upgrade?from=swap");
+        return;
+      }
       if (data.status === "updated") {
         track("daily_drop_another_option_result", { status: "updated", selected_item_count: data.selectedItemIds?.length ?? 0 });
         router.refresh();
@@ -314,6 +329,11 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
         <Button variant="secondary" size="sm" onClick={anotherOption} disabled={busy || worn}>
           <Icon.Sparkle className="h-3.5 w-3.5" /> Another option
         </Button>
+      </div>
+
+      {/* Investment vault (Module C): save today's look to the Lookbook */}
+      <div className="mt-2 flex justify-center">
+        <SaveLookButton itemIds={drop.itemIds} title="Today's drop" recommendationId={drop.id} />
       </div>
 
       {actionMsg && <p className="mt-2 text-xs text-graphite">{actionMsg}</p>}

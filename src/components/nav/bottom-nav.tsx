@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Shirt, Sparkles, Calendar, User } from "lucide-react";
+import { Home, Shirt, Sparkles, BookMarked, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// IA (plan §6): Today · Closet · Occasions(+) · Lookbook · Profile.
+// Today is the default landing — the daily habit surface.
 const items = [
   { href: "/dashboard", label: "Today", icon: Home },
-  { href: "/wardrobe", label: "Wardrobe", icon: Shirt },
-  { href: "/occasion/new", label: "Style Me", icon: Sparkles },
-  { href: "/plan", label: "Plan", icon: Calendar },
-  { href: "/profile", label: "You", icon: User },
+  { href: "/wardrobe", label: "Closet", icon: Shirt },
+  { href: "/occasion/new", label: "Occasions", icon: Sparkles },
+  { href: "/lookbook", label: "Lookbook", icon: BookMarked },
+  { href: "/profile", label: "Profile", icon: User },
 ];
 
 export function BottomNav() {

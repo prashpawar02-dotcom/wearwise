@@ -94,6 +94,15 @@ async function runCron(req: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "server_not_configured" }, { status: 500 });
   }
 
+  // Admin kill-switch (Module A): flipping daily_drop.enabled off stops the
+  // nightly batch instantly, no redeploy.
+  const { getFlags } = await import("@/lib/flags");
+  const flags = await getFlags();
+  if (!flags["daily_drop.enabled"]) {
+    console.log(`${LOG} skipped: daily_drop.enabled=false`);
+    return NextResponse.json({ skipped: "daily_drop_disabled" }, { status: 200 });
+  }
+
   const startedAt = Date.now();
   console.log(`${LOG} started`);
 

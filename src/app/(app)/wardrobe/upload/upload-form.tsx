@@ -75,7 +75,17 @@ export function UploadForm() {
         .from("wardrobe_items")
         .insert({ user_id: userId, image_path: path, ai_tag_status: "analyzing" })
         .select("id").single();
-      if (insErr || !row) throw new Error("insert");
+      if (insErr || !row) {
+        // Free-tier cap (Module E): the DB trigger rejects item #16 for free
+        // users. Route to the paywall at this peak-want moment.
+        if (insErr?.message?.includes("wardrobe_limit_reached")) {
+          patch(item.localId, { status: "failed" });
+          track("paywall_hit", { source: "wardrobe_cap" });
+          router.push("/upgrade?from=wardrobe");
+          return;
+        }
+        throw new Error("insert");
+      }
 
       patch(item.localId, { status: "analyzing", itemId: row.id });
       // Non-sensitive: signals an item was uploaded (no path/URL/name).

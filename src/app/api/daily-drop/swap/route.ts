@@ -27,6 +27,19 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ status: "error", reason: "unauthorized" }, { status: 401 });
 
+  // Kill-switch + server-side entitlement gate (Modules A/E): Free users get
+  // 1 drop/day with NO swaps — enforced here, never only in the UI.
+  const { getFlags } = await import("@/lib/flags");
+  const { getEntitlements } = await import("@/lib/entitlements");
+  const flags = await getFlags();
+  if (!flags["swaps.enabled"]) {
+    return NextResponse.json({ status: "disabled", message: "Swaps are taking a short break — back soon." });
+  }
+  const ent = await getEntitlements(user.id);
+  if (!ent.limits.unlimitedSwaps) {
+    return NextResponse.json({ status: "upgrade_required", reason: "swaps_locked" }, { status: 402 });
+  }
+
   let body: { recommendationId?: string; replaceItemId?: string; replacementItemId?: string } = {};
   try {
     body = await req.json();

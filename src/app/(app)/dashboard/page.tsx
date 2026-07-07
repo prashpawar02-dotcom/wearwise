@@ -18,6 +18,7 @@ import { getWeatherContext, type WeatherContext } from "@/lib/weather";
 import { userLocalDate } from "@/lib/daily-drop";
 import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
 import { PrepareDropButton } from "./prepare-drop-button";
+import { StreakFlame } from "@/components/wearwise/StreakFlame";
 
 export const dynamic = "force-dynamic"; // per-user signed URLs; never cache
 
@@ -48,6 +49,7 @@ export default async function DashboardPage() {
     { data: approvedData },
     { count: weeklyWorn },
     { data: quietGemRows },
+    { data: streakRow },
   ] = await Promise.all([
     supabase.from("wardrobe_items").select("id", { count: "exact", head: true }).eq("user_id", user.id),
     supabase.from("outfit_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3),
@@ -70,6 +72,8 @@ export default async function DashboardPage() {
       .not("last_worn_at", "is", null)
       .order("last_worn_at", { ascending: true })
       .limit(1),
+    // Streak (Module C) — read-own via RLS; check-in happens client-side.
+    supabase.from("streaks").select("current_count").eq("user_id", user.id).maybeSingle(),
   ]);
 
   const items = itemCount ?? 0;
@@ -110,12 +114,15 @@ export default async function DashboardPage() {
               <em className="text-plum">{firstName ? `${firstName}.` : "there."}</em>
             </h1>
           </div>
-          <span
-            aria-hidden="true"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-stone font-serif text-base text-charcoal"
-          >
-            {initial}
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <StreakFlame initialCount={streakRow?.current_count ?? 0} />
+            <span
+              aria-hidden="true"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-stone font-serif text-base text-charcoal"
+            >
+              {initial}
+            </span>
+          </div>
         </div>
         <p className="mt-2 text-sm text-graphite">
           {bestPick

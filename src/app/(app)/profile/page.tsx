@@ -7,6 +7,9 @@ import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/Icon";
 import { DailyDropPreferences } from "./daily-drop-preferences";
 import { WeatherCityCard } from "./weather-city-card";
+import { EnableNotifications } from "@/components/wearwise/EnableNotifications";
+import { SubscriptionCard } from "./subscription-card";
+import { DeleteAccountButton } from "./delete-account-button";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +53,23 @@ export default async function ProfilePage() {
           <Link href="/wardrobe" className="mt-4 inline-flex min-h-[24px] items-center gap-1.5 text-sm font-medium text-plum hover:underline">
             Open Closet Board <Icon.ArrowRight className="h-3.5 w-3.5" />
           </Link>
+        </Card>
+
+        {/* Plan & billing (Module E) */}
+        <SubscriptionCard userId={user.id} />
+
+        {/* Morning push (Module D) */}
+        <Card className="p-4">
+          <p className="ww-eyebrow text-plum">Morning reminder</p>
+          <p className="mt-1 text-sm text-graphite">
+            One push a day when your outfit is ready. No spam — ever.
+          </p>
+          <div className="mt-3">
+            <EnableNotifications
+              reminderTime={profile?.daily_drop_time ?? "07:30"}
+              timezone={profile?.timezone ?? "Asia/Kolkata"}
+            />
+          </div>
         </Card>
 
         {/* Weather city — powers real weather advice on Today + Style Me */}
@@ -98,6 +118,9 @@ export default async function ProfilePage() {
                 <Icon.User className="h-4 w-4 text-plum" /> Account
               </span>
               <SignOutButton />
+            </div>
+            <div className="p-4">
+              <DeleteAccountButton />
             </div>
           </div>
         </Card>

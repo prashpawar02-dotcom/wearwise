@@ -1,7 +1,9 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/", "/login", "/auth"];
+// /vote/[token] is the ONLY unauthenticated app surface (Module F): a
+// read-scoped, rate-limited, no-PII public page for friend voting.
+const PUBLIC_PATHS = ["/", "/login", "/auth", "/vote"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

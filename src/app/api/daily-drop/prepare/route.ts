@@ -17,6 +17,13 @@ export const runtime = "nodejs";
  * NOT here (by design, this pass): no cron secret, no notification sending, no
  * admin access to other users. Optional JSON body: { force?: boolean }.
  */
+// Admin kill-switch (Module A): manual prepare honours daily_drop.enabled too.
+async function dailyDropDisabled(): Promise<boolean> {
+  const { getFlags } = await import("@/lib/flags");
+  const flags = await getFlags();
+  return !flags["daily_drop.enabled"];
+}
+
 export async function POST(req: Request) {
   const supabase = createClient();
 

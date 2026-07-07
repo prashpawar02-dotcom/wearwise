@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { OCCASIONS, type OutfitSuggestion, type WardrobeItem } from "@/lib/types";
 import { WornTodayButton } from "./worn-today-button";
 import { SuggestionFeedback } from "./suggestion-feedback";
+import { SaveLookButton } from "@/components/wearwise/SaveLookButton";
+import { ShareLookButton } from "@/components/wearwise/ShareLookButton";
 import { Clock } from "lucide-react";
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
@@ -109,8 +111,10 @@ export default async function OutfitsPage({ params }: { params: { requestId: str
                     })}
                   </div>
 
-                  <div className="mt-4 flex">
+                  <div className="mt-4 flex items-center gap-2">
                     <WornTodayButton suggestionId={s.id} itemIds={s.item_ids} />
+                    <SaveLookButton itemIds={s.item_ids} title={s.title} suggestionId={s.id} />
+                    <ShareLookButton suggestionIds={[s.id]} />
                   </div>
 
                   {/* Single feedback path for beta: the inline "Rate this look" form

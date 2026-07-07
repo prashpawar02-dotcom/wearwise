@@ -139,4 +139,41 @@ export interface DailyRecommendation {
   skipped_at: string | null;
   created_at: string;
   updated_at: string;
+  // Module B cache (migration 0019): pre-computed "another option" sets.
+  alt_item_ids?: string[][];
+  alt_cursor?: number;
+}
+
+// ---- Subscriptions (migration 0012) ----
+export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled" | "expired";
+
+export interface Subscription {
+  user_id: string;
+  plan: "free" | "pro";
+  status: SubscriptionStatus;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+  razorpay_subscription_id: string | null;
+  razorpay_customer_id: string | null;
+  updated_at: string;
+}
+
+// ---- Streaks (migration 0013) ----
+export interface Streak {
+  user_id: string;
+  current_count: number;
+  longest_count: number;
+  last_active_date: string | null;
+  freezes_remaining: number;
+}
+
+// ---- Lookbook (migration 0014) ----
+export interface SavedLook {
+  id: string;
+  user_id: string;
+  suggestion_id: string | null;
+  recommendation_id: string | null;
+  title: string | null;
+  item_ids: string[];
+  created_at: string;
 }
