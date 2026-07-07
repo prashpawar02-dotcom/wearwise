@@ -4,18 +4,6 @@
     {
       "path": "/api/cron/daily-drop/prepare",
       "schedule": "30 1 * * *"
-    },
-    {
-      "path": "/api/cron/notify/morning",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/cron/notify/streak-risk",
-      "schedule": "30 13 * * *"
-    },
-    {
-      "path": "/api/cron/recap/weekly",
-      "schedule": "30 13 * * 0"
     }
   ]
 }
