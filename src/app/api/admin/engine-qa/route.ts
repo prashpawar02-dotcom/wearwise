@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { recommendOutfits } from "@/lib/engine/recommend";
+import { eligiblePool } from "@/lib/engine/filters";
+import { engineRole } from "@/lib/engine/classify";
 import { loadEngineContext } from "@/lib/engine/loadContext";
 import { DEFAULT_OCCASION_PROFILES } from "@/lib/engine/config";
 import type { EngineOccasion, ScoredOutfit } from "@/lib/engine/types";
@@ -10,13 +12,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Admin QA — Engine v2 factor breakdown per generated outfit (Phase 1).
+ * Admin QA — Engine v2 factor breakdown + normalization diagnostics (Phase 1).
  * GET /api/admin/engine-qa?occasion=work&userId=<uuid>&tempC=32&rain=0
  *
  * Admin only. Runs the deterministic pipeline against a user's wardrobe
- * (defaults to the admin's own) and returns the hero + backups with their
- * full scoring-factor contributions, confidence, and pipeline diagnostics.
- * Read-only: it computes on demand and stores nothing.
+ * (defaults to the admin's own) and returns hero + backups with their scoring
+ * factors, confidence, pipeline diagnostics, and — to debug "why did N items
+ * drop?" — raw/normalized category & availability counts plus per-filter
+ * rejection counts. Read-only: computes on demand, stores nothing.
  */
 async function requireAdminUser() {
   const supabase = createClient();
@@ -33,6 +36,9 @@ function isEngineOccasion(v: string): v is EngineOccasion {
 function serialize(o: ScoredOutfit) {
   return {
     template: o.template,
+    completeness: o.completeness,
+    missing_slots: o.missingSlots,
+    partial_reason: o.partialReason ?? null,
     item_ids: o.itemIds,
     items: o.items.map((i) => ({ id: i.id, name: i.user_facing_name ?? i.category, formality: i.formality })),
     total: Number(o.total.toFixed(3)),
@@ -41,6 +47,16 @@ function serialize(o: ScoredOutfit) {
     factors: o.factors.map((f) => ({ ...f, contribution: Number(f.contribution.toFixed(3)) })),
     penalties: o.penalties.map((f) => ({ ...f, contribution: Number(f.contribution.toFixed(3)) })),
   };
+}
+
+/** Count occurrences of a key over items (skips null/empty as "(none)"). */
+function countBy(items: WardrobeItem[], key: (i: WardrobeItem) => string | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const i of items) {
+    const k = (key(i) ?? "(none)") || "(none)";
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
 }
 
 export async function GET(req: Request) {
@@ -70,6 +86,23 @@ export async function GET(req: Request) {
     weather: { tempC: Number.isFinite(tempC as number) ? (tempC as number) : null, isRaining },
   });
 
+  // Normalization diagnostics (why did items drop before candidate building?).
+  const availableItems = items.filter((i) => (i.availability_status ?? "available") === "available");
+  const { pool, rejected } = eligiblePool(items, ctx);
+  const rejectionCounts = countBy(rejected.map((r) => r.item), () => "x"); // placeholder replaced below
+  delete rejectionCounts.x;
+  for (const r of rejected) rejectionCounts[r.filter] = (rejectionCounts[r.filter] ?? 0) + 1;
+  const normalizedItemsSample = items.slice(0, 12).map((i) => ({
+    id: i.id,
+    label: i.user_facing_name ?? i.category ?? "(unnamed)",
+    category: i.category,
+    role: engineRole(i),
+    availability: i.availability_status ?? "available",
+    formality: i.formality ?? null,
+    cultural_tag: i.cultural_tag ?? null,
+    occasion_tags: i.occasion_tags ?? [],
+  }));
+
   const result = recommendOutfits(items, ctx, 3);
 
   return NextResponse.json({
@@ -78,6 +111,17 @@ export async function GET(req: Request) {
     userId: targetUserId,
     weather: ctx.weather,
     diagnostics: result.diagnostics,
+    normalization: {
+      categoryCountsRaw: countBy(items, (i) => i.category),
+      categoryCountsAfterAvailability: countBy(availableItems, (i) => i.category),
+      availabilityStatusCounts: countBy(items, (i) => i.availability_status ?? "available"),
+      eligiblePoolSize: pool.length,
+      rejectionCounts,
+      normalizedItemsSample,
+    },
+    outfit_status: result.outfitStatus,
+    missing_slots: result.missingSlots,
+    partial_reason: result.partialReason ?? null,
     dual_pick: result.dualPick,
     fail_reason: result.failReason ?? null,
     hero: result.hero ? serialize(result.hero) : null,

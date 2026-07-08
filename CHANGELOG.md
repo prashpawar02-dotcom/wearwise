@@ -1,5 +1,60 @@
 # WearWise — Changelog
 
+## Phase 1 hotfix 2 — Everyday formality window + normalization diagnostics (2026-07-08)
+
+Fixes a production report where `/api/admin/engine-qa?occasion=work` returned
+`hero: null` (`afterAvailability: 3`, `candidatesBuilt: 0`) for a real 10-item
+work wardrobe: 4 Top, 3 Bottom, 3 Kurta, 0 Footwear, all `availability_status =
+'available'`.
+
+**Root cause — not column normalization.** The engine already reads
+`availability_status`, `category` ("Top"/"Bottom"/"Kurta", case-insensitive),
+`user_facing_name`, and `sub_category` correctly. The conservative tag backfill
+(migration 0020) assigns `formality = 2` to untagged tops/bottoms, and the
+formality-window HARD filter for `work` (floor 3) excluded all of them — leaving
+only the 3 backfilled kurtas (`formality = 3`, `cultural_tag = 'indian_ethnic'`),
+which then had no bottom to pair with. Hence `afterAvailability: 3` / `hero: null`.
+
+**Fix** (`src/lib/engine/filters.ts`): formality is a hard gate ONLY for
+reputation occasions (interview / wedding_guest / formal_event, floor ≥ 4) —
+these stay strict (unknown excluded; interview stays all-items ≥ 4). For everyday
+occasions (work / casual / dinner / ethnic / festive) formality is a SOFT ranking
+signal (scoring), with a ceiling guard so a too-formal piece can't be forced into
+a lower-key occasion. No weather / cultural / availability rule relaxed; footwear
+never fabricated.
+
+Result for the reported wardrobe: `afterAvailability: 10`,
+`partialCandidatesBuilt/Valid: 21`, `outfit_status: "partial"`, `missing_slots:
+["footwear"]`, `partial_reason: "no_footwear_in_wardrobe"`, `fail_reason:
+"partial_missing_footwear"`, `hero != null`.
+
+Admin QA route (`/api/admin/engine-qa`) gains normalization diagnostics:
+`categoryCountsRaw`, `categoryCountsAfterAvailability`, `availabilityStatusCounts`,
+`eligiblePoolSize`, `rejectionCounts` (per hard filter), `normalizedItemsSample`.
+
+Tests: +15 golden assertions (DB-shaped rows normalize; category→role mapping;
+10-item no-footwear wardrobe → partial; null color_family/fabric don't block;
+in_wash still excluded). **62/62 green.** No schema/migration change.
+
+## Phase 1 hotfix — Partial outfit when footwear is missing (2026-07-08)
+
+Constraint-based no-result states shouldn't be dead ends. When a valid garment
+pairing exists but the wardrobe has no usable footwear, the engine returns a
+**partial** outfit instead of `hero: null`.
+
+- `engine/types.ts`: `OutfitCompleteness` (`"complete" | "partial"`),
+  `MissingSlot`, `PartialReason`; `ScoredOutfit` gains `completeness`,
+  `missingSlots`, `partialReason`; `RecommendationResult` gains `outfitStatus`,
+  `missingSlots`, `partialReason`; diagnostics gain `partialCandidatesBuilt/Valid`.
+- `recommend.ts`: tries COMPLETE outfits first (unchanged when any exist); only
+  if none exist falls back to partial garment-only outfits — confidence capped
+  **≤ 0.45**, `missing_slots: ["footwear"]`, honest note ("Top and bottom are
+  ready. I do not have shoes in your wardrobe yet, so choose your own footwear."),
+  `fail_reason: "partial_missing_footwear"`. No hard rule relaxed; footwear never
+  fabricated; no accessory added to feel complete.
+- Admin QA surfaces `outfit_status` / `missing_slots` / `partial_reason`.
+- Tests: +23 golden assertions. No schema/migration change.
+
 ## Phase 1 — Recommendation Engine v2 + Schema (2026-07-07)
 
 The generic outfit generator is replaced by a deterministic, rules-gated,

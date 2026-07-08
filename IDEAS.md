@@ -26,3 +26,16 @@ Log only. Do not build without CEO approval / the owning phase.
 - **Pair-cooldown store.** `pair_cooldown_days` threshold exists but pair-history
   isn't recorded yet; the learning loop (Phase 7) should add a `pair_affinity` /
   worn-pair table so the repeat penalty can act on pairs, not just items.
+
+## Discovered during Phase 1 hotfixes (partial / missing-footwear / formality)
+- **Phase 4 UI:** render a "Missing shoes in wardrobe" chip on the Today card
+  and Style Me result when `outfit_status === "partial"` / `missing_slots`
+  includes `footwear`, with a one-tap "add footwear" nudge.
+- **Auto-tagger formality confidence:** the conservative backfill defaults
+  formality to 2 for untagged tops/bottoms. Once the vision tagger populates
+  real formality + `tag_confidence`, revisit whether everyday occasions should
+  tighten the (now soft) formality gate for high-confidence items.
+- **Belt-on-ethnic template quirk (latent, safe):** for ethnic occasions the
+  accessory picker can attach a belt to a kurta/saree candidate, which
+  `candidateRejection` then correctly drops (fail closed). Harmless but wasteful;
+  skip belts for ethnic anchors in the accessory picker.

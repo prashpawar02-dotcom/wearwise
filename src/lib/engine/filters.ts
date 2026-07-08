@@ -30,16 +30,32 @@ function isAvailable(i: WardrobeItem): boolean {
   return (i.availability_status ?? "available") === "available";
 }
 
-/** formality window: item formality within the occasion window (fail closed). */
+/**
+ * Formality gate.
+ *
+ * Reputation occasions (interview / wedding_guest / formal_event — floor ≥ 4)
+ * stay STRICT and fail closed: formality must be known and inside the window,
+ * unknown is excluded. This preserves the "interview = all items ≥ 4" guarantee.
+ *
+ * Everyday occasions (work / casual / dinner / ethnic / festive — floor ≤ 3)
+ * treat formality as a SOFT ranking signal, not a hard gate. The conservative
+ * tag backfill (migration 0020) maps many genuine office tops/bottoms to
+ * formality 2; hard-excluding them here wrongly empties the wardrobe (this was
+ * the "afterAvailability: 3 / hero: null" bug). Low formality is instead
+ * down-weighted by scoring (formality_coherence, occasion_fit). We keep only a
+ * ceiling guard so a severely-too-formal piece can't be forced into a lower-key
+ * occasion; unknown formality is allowed through and left to scoring.
+ */
 function passesFormalityWindow(i: WardrobeItem, ctx: EngineContext): boolean {
   if (ctx.profile.bypassFormality) return true; // gym: comfort, not formality
   const f = formalityOf(i);
-  if (f == null) {
-    // Unknown formality may only enter low-stakes occasions (floor ≤ 2). This
-    // guarantees formal occasions (interview: floor 4) never get an unknown.
-    return ctx.profile.formalityMin <= 2;
+  const strict = ctx.profile.formalityMin >= 4; // reputation occasions only
+  if (strict) {
+    if (f == null) return false; // never let an unknown into a formal occasion
+    return f >= ctx.profile.formalityMin && f <= ctx.profile.formalityMax;
   }
-  return f >= ctx.profile.formalityMin && f <= ctx.profile.formalityMax;
+  if (f == null) return true;            // unknown → allowed, scoring ranks it
+  return f <= ctx.profile.formalityMax;   // ceiling guard only (soft low end)
 }
 
 /** weather/fabric exclusion — too-warm fabric on a hot day is excluded. */
