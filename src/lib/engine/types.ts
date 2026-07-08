@@ -117,6 +117,15 @@ export interface EngineContext {
   now?: Date;
 }
 
+/** Whether an outfit has every expected slot, or is a safe partial (§ Phase 1 hotfix). */
+export type OutfitCompleteness = "complete" | "partial";
+
+/** Slots an outfit is knowingly missing (only footwear is fillable as partial today). */
+export type MissingSlot = "footwear" | "layer" | "accessory";
+
+/** Why a partial outfit was returned instead of a complete one. */
+export type PartialReason = "no_footwear_in_wardrobe" | "no_available_footwear";
+
 /** A single scoring factor's contribution (positive) or penalty (negative). */
 export interface FactorContribution {
   name: string;
@@ -143,6 +152,12 @@ export interface ScoredOutfit {
   penalties: FactorContribution[]; // negative contributions
   /** Top-3 plain-language reasons, rendered from real factors (§3.5). */
   whyThisWorks: string[];
+  /** "complete" (all expected slots) or "partial" (safe fallback, e.g. no shoes). */
+  completeness: OutfitCompleteness;
+  /** Slots this outfit is knowingly missing; [] when complete. */
+  missingSlots: MissingSlot[];
+  /** Set only when completeness === "partial". */
+  partialReason?: PartialReason;
 }
 
 /** The engine's top-level result. */
@@ -153,12 +168,22 @@ export interface RecommendationResult {
   dualPick: boolean;
   /** Machine reason when hero is null (never fabricate an outfit). */
   failReason?: string;
+  /** Reflects the hero: "complete" normally, "partial" when a safe fallback was used. */
+  outfitStatus: OutfitCompleteness;
+  /** Slots the returned outfits are missing (e.g. ["footwear"]); [] when complete. */
+  missingSlots: MissingSlot[];
+  /** Why a partial result was returned (present only in partial mode). */
+  partialReason?: PartialReason;
   /** Diagnostics for the admin QA route (not shown to users). */
   diagnostics: {
     poolSize: number;
     afterAvailability: number;
-    candidatesBuilt: number;
-    candidatesValid: number;
+    candidatesBuilt: number;         // COMPLETE candidates built
+    candidatesValid: number;         // COMPLETE candidates that passed all hard filters
+    partialCandidatesBuilt: number;  // partial (missing-footwear) candidates built
+    partialCandidatesValid: number;  // partial candidates that passed all hard filters
+    missingSlots?: MissingSlot[];
+    partialReason?: PartialReason;
     elapsedMs: number;
   };
 }

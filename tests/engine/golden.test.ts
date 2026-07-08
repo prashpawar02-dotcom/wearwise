@@ -171,6 +171,85 @@ const allResultIds = (r: ReturnType<typeof recommendOutfits>) =>
   ok("60-item engine elapsed < 800ms", r.diagnostics.elapsedMs < 800, `${r.diagnostics.elapsedMs}ms`);
 }
 
+// =====================================================================
+// 10. PARTIAL OUTFIT FALLBACK — missing footwear (Phase 1 hotfix)
+// =====================================================================
+{
+  // 10.1–10.3 valid work top+bottom, NO footwear → partial hero, not null.
+  const items = [
+    top({ id: "wt1", formality: 4, user_facing_name: "Work shirt" }),
+    top({ id: "wt2", formality: 4, user_facing_name: "Work blouse" }),
+    bottom({ id: "wb1", formality: 4, user_facing_name: "Trousers" }),
+    bottom({ id: "wb2", formality: 4, user_facing_name: "Formal skirt" }),
+  ];
+  const r = recommendOutfits(items, ctxFor("work"), 3);
+  ok("partial: no-footwear work wardrobe returns a hero (not null)", r.hero != null);
+  ok("partial: outfitStatus === 'partial'", r.outfitStatus === "partial");
+  ok("partial: hero.completeness === 'partial'", r.hero != null && r.hero.completeness === "partial");
+  ok("partial: missing_slots === ['footwear']", JSON.stringify(r.missingSlots) === JSON.stringify(["footwear"]));
+  ok("partial: hero.missingSlots === ['footwear']", r.hero != null && JSON.stringify(r.hero.missingSlots) === JSON.stringify(["footwear"]));
+  ok("partial: partialReason === 'no_footwear_in_wardrobe'", r.partialReason === "no_footwear_in_wardrobe");
+  ok("partial: fail_reason is 'partial_missing_footwear' (not 'no_valid_outfit')", r.failReason === "partial_missing_footwear");
+  ok("partial: NO footwear item fabricated in hero", r.hero != null && r.hero.items.every((i) => engineRole(i) !== "footwear"));
+  ok("partial: confidence capped <= 0.45", r.hero != null && r.hero.confidence <= 0.45);
+  ok("partial: honest footwear note present", r.hero != null && r.hero.whyThisWorks[0].includes("choose your own footwear"));
+  ok("partial: diagnostics expose partial counts", r.diagnostics.partialCandidatesValid > 0 && r.diagnostics.candidatesValid === 0);
+  ok("partial: backups are also partial", r.backups.every((b) => b.completeness === "partial"));
+}
+
+{
+  // 10.4 partial fallback still blocks in_wash items.
+  const items = [
+    top({ id: "clean-shirt", formality: 4 }),
+    top({ id: "washing-shirt", formality: 4, availability_status: "in_wash", user_facing_name: "Fav shirt" }),
+    bottom({ id: "trs", formality: 4 }),
+  ];
+  const r = recommendOutfits(items, ctxFor("work"), 3);
+  ok("partial still excludes in_wash items", r.hero != null && !allResultIds(r).includes("washing-shirt"));
+  ok("partial hero still forms from clean items", r.hero != null && r.outfitStatus === "partial");
+}
+
+{
+  // 10.5 partial fallback still blocks weather-invalid fabric (wool at 32C).
+  const items = [
+    top({ id: "wool-top", formality: 4, fabric: "wool", user_facing_name: "Wool blazer top" }),
+    top({ id: "cotton-top", formality: 4, fabric: "cotton" }),
+    bottom({ id: "b", formality: 4 }),
+  ];
+  const r = recommendOutfits(items, ctxFor("work", { tempC: 32, isRaining: false }), 3);
+  ok("partial still excludes weather-blocked wool at 32C", r.hero != null && !allResultIds(r).includes("wool-top"));
+}
+
+{
+  // 10.6 partial fallback still blocks culturally illegal pairings.
+  // western top + bottom + dupatta, no shoes → partial top+bottom, dupatta excluded.
+  const western = [top({ id: "wtop", formality: 4 }), bottom({ id: "wbot", formality: 4 }), dupatta({ id: "dwest" })];
+  const rw = recommendOutfits(western, ctxFor("work"), 3);
+  ok("partial never puts a dupatta on a western look", rw.hero != null && rw.hero.items.every((i) => engineRole(i) !== "drape"));
+  // kurta + bottom + belt, no shoes → belt must never appear over the kurta.
+  const ethnic = [kurta({ id: "ek" }), bottom({ id: "eb", cultural_tag: "indian_ethnic", formality: 4 }), belt({ id: "ebelt" })];
+  const re = recommendOutfits(ethnic, ctxFor("ethnic"), 3);
+  ok("partial never surfaces belt-over-kurta", !allResultIds(re).includes("ebelt"));
+}
+
+{
+  // 10.7 no valid top+bottom (only tops) → still hero:null with helpful reason.
+  const items = [top({ id: "only1", formality: 4 }), top({ id: "only2", formality: 4 })];
+  const r = recommendOutfits(items, ctxFor("work"), 3);
+  ok("no valid pairing → hero is null", r.hero === null);
+  ok("no valid pairing → helpful fail_reason (not partial)", r.failReason === "no_valid_outfit");
+  ok("no valid pairing → outfitStatus 'complete' (n/a), missing_slots []", r.outfitStatus === "complete" && r.missingSlots.length === 0);
+}
+
+{
+  // 10.8 footwear present → normal COMPLETE outfit, partial mode NOT used.
+  const items = [top({ id: "ct", formality: 4 }), bottom({ id: "cb", formality: 4 }), shoes({ id: "cs", formality: 4 })];
+  const r = recommendOutfits(items, ctxFor("work"), 3);
+  ok("footwear present → outfitStatus 'complete'", r.outfitStatus === "complete");
+  ok("footwear present → hero includes footwear", r.hero != null && r.hero.items.some((i) => engineRole(i) === "footwear"));
+  ok("footwear present → missing_slots empty", r.missingSlots.length === 0 && r.failReason == null);
+}
+
 // ---- summary ----
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log("Failures: " + fails.join("; ")); }

@@ -26,3 +26,18 @@ Log only. Do not build without CEO approval / the owning phase.
 - **Pair-cooldown store.** `pair_cooldown_days` threshold exists but pair-history
   isn't recorded yet; the learning loop (Phase 7) should add a `pair_affinity` /
   worn-pair table so the repeat penalty can act on pairs, not just items.
+
+## Discovered during Phase 1 hotfix (partial / missing-footwear)
+- **Phase 4 UI:** render a "Missing shoes in wardrobe" chip on the Today card
+  and Style Me result when `outfit_status === "partial"` / `missing_slots`
+  includes `footwear`, with a one-tap "add footwear" nudge. Engine already
+  returns the honest note + `missing_slots`.
+- **Generalise partial slots:** the model supports `missingSlots` beyond
+  footwear (e.g. `layer` on a cold day). Only footwear is wired now; revisit if
+  other optional-slot gaps prove valuable.
+- **Belt-on-ethnic template quirk (latent, safe):** for ethnic occasions the
+  accessory picker can attach a belt to a kurta/saree candidate, which
+  `candidateRejection` then correctly drops (fail closed). Harmless but wasteful
+  — the accessory picker should skip belts for ethnic anchors so those
+  candidates aren't discarded. Not a footwear-hotfix concern; fix alongside the
+  learning loop / accessory relevance work.

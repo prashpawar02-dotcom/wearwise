@@ -19,3 +19,6 @@ tsconfig.tsbuildinfo
 .ww-test-out/
 
 supabase/.temp/
+tsconfig.probe.json
+.probe-out/
+tests/engine/_probe.ts

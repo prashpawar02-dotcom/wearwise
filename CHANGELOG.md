@@ -1,5 +1,38 @@
 # WearWise — Changelog
 
+## Phase 1 hotfix — Partial outfit when footwear is missing (2026-07-08)
+
+Constraint-based no-result states shouldn't be dead ends. When a valid garment
+pairing exists but the wardrobe has **no usable footwear**, the engine now
+returns a **partial** outfit instead of `hero: null`.
+
+- New completeness concept in `engine/types.ts`: `OutfitCompleteness`
+  (`"complete" | "partial"`), `MissingSlot`, `PartialReason`. `ScoredOutfit`
+  gains `completeness`, `missingSlots`, `partialReason`; `RecommendationResult`
+  gains `outfitStatus`, `missingSlots`, `partialReason`; diagnostics gain
+  `partialCandidatesBuilt` / `partialCandidatesValid` / `missingSlots` /
+  `partialReason`.
+- `recommend.ts`: tries **complete** outfits first (unchanged behaviour when
+  any exist); only if none exist does it fall back to partial garment-only
+  outfits. Partial outfits are truthfully capped at **confidence ≤ 0.45**, carry
+  `missing_slots: ["footwear"]`, an honest note ("Top and bottom are ready. I do
+  not have shoes in your wardrobe yet, so choose your own footwear."), and
+  `fail_reason: "partial_missing_footwear"` (not `no_valid_outfit`).
+  `partialReason` is `no_footwear_in_wardrobe` (none owned) vs
+  `no_available_footwear` (owned but all in-wash/unavailable).
+- **No hard rule relaxed**: partial candidates still pass every filter — never
+  in-wash/unavailable, weather-blocked fabric, culturally illegal pairing
+  (belt-over-kurta, dupatta-on-western), one-piece + separate bottom. Footwear
+  is never fabricated and no accessory is added to feel complete. If the
+  garments themselves fail (e.g. no valid top+bottom), it still returns
+  `hero: null` with a helpful reason.
+- Admin QA route surfaces `outfit_status`, `missing_slots`, `partial_reason`
+  and the partial diagnostics/counts per outfit.
+- Tests: +23 golden assertions (partial returns hero; missing_slots + partial
+  status; no fabricated footwear; partial still blocks in-wash / weather /
+  cultural; no-pairing still null; footwear-present stays complete). 47/47 green.
+- No schema/migration changes.
+
 ## Phase 1 — Recommendation Engine v2 + Schema (2026-07-07)
 
 The generic outfit generator is replaced by a deterministic, rules-gated,

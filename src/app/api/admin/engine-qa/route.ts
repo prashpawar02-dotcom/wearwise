@@ -33,6 +33,9 @@ function isEngineOccasion(v: string): v is EngineOccasion {
 function serialize(o: ScoredOutfit) {
   return {
     template: o.template,
+    completeness: o.completeness,
+    missing_slots: o.missingSlots,
+    partial_reason: o.partialReason ?? null,
     item_ids: o.itemIds,
     items: o.items.map((i) => ({ id: i.id, name: i.user_facing_name ?? i.category, formality: i.formality })),
     total: Number(o.total.toFixed(3)),
@@ -78,6 +81,9 @@ export async function GET(req: Request) {
     userId: targetUserId,
     weather: ctx.weather,
     diagnostics: result.diagnostics,
+    outfit_status: result.outfitStatus,
+    missing_slots: result.missingSlots,
+    partial_reason: result.partialReason ?? null,
     dual_pick: result.dualPick,
     fail_reason: result.failReason ?? null,
     hero: result.hero ? serialize(result.hero) : null,
