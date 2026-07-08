@@ -22,8 +22,9 @@ export function LoginForm() {
 
   const supabase = createClient();
   const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ??
-    (typeof window !== "undefined" ? window.location.origin : "");
+    typeof window !== "undefined"
+      ? window.location.origin
+      : process.env.NEXT_PUBLIC_SITE_URL ?? "";
 
   // Password login is a DEV-ONLY fallback. It is hidden in production unless
   // NEXT_PUBLIC_ENABLE_PASSWORD_LOGIN === "true". Closed beta uses magic links only.
