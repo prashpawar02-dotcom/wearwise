@@ -1,6 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { getWeatherContext } from "@/lib/weather";
 import { isWearableItem } from "@/lib/wardrobe";
+import { defaultContext } from "@/lib/outfit-engine";
+import { explainSelectedOutfit } from "@/lib/engine/recommend";
+import type { EngineOccasion } from "@/lib/engine/types";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -305,6 +308,11 @@ interface UpsertInput {
   /** Pre-computed "another option" candidates (Module B cache; ids only). */
   alt_item_ids?: string[][];
   alt_cursor?: number;
+  /** Engine v2 (migration 0020): stored factor contributions + confidence. */
+  confidence?: number | null;
+  factor_breakdown?: Record<string, unknown> | null;
+  is_dual_pick?: boolean;
+  engine_version?: string | null;
 }
 
 async function upsertRecommendation(
@@ -461,11 +469,22 @@ export async function prepareDailyDrop(
     }
   }
 
+  // ---- Engine v2: score the chosen outfit and persist its factor breakdown.
+  // This stores real per-recommendation factor contributions + confidence
+  // (Phase 1). It does NOT change which outfit was selected; Phase 4 rewires
+  // selection itself onto recommendOutfits().
+  const engineOccasion: EngineOccasion = plan.core === "traditional" ? "ethnic" : "casual";
+  const engineExplain = explainSelectedOutfit(plan.items, defaultContext(engineOccasion));
+
   const rec = await upsertRecommendation(supabase, {
     user_id: userId,
     local_date: localDate,
     status: "prepared",
     selected_item_ids: plan.items.map((i) => i.id),
+    confidence: engineExplain.confidence,
+    factor_breakdown: engineExplain.factor_breakdown,
+    is_dual_pick: engineExplain.is_dual_pick,
+    engine_version: "v2",
     alt_item_ids: altSets,
     alt_cursor: 0,
     weather_summary: weatherSummary,

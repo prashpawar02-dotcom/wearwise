@@ -51,6 +51,10 @@ export interface Profile {
   daily_drop_days: number[];        // 0=Sun..6=Sat
   show_quiet_gems: boolean;
   weather_advice_enabled: boolean;
+  // Engine v2 absolute exclusions (optional; NULL/empty = no exclusions).
+  excluded_colors?: string[] | null;
+  excluded_categories?: string[] | null;
+  excluded_footwear?: string[] | null;
 }
 
 export interface WardrobeItem {
@@ -75,6 +79,29 @@ export interface WardrobeItem {
   user_corrected_tags: boolean;
   // Laundry / availability (v0.7). Defaults to 'available' in the DB.
   availability_status: AvailabilityStatus;
+  in_wash_since: string | null;
+  // Engine v2 structured attributes (migration 0020). All nullable: NULL = unknown/unconfirmed.
+  color_family: string | null;
+  pattern_boldness: number | null;   // 0 none .. 3 bold
+  fabric: string | null;             // coarse: cotton|linen|denim|wool|silk|synthetic|velvet|...
+  sleeve_length: string | null;
+  fit: string | null;
+  formality: number | null;          // 1 very casual .. 5 formal
+  warmth: number | null;             // 1 very light .. 5 very warm
+  min_temp_c: number | null;
+  max_temp_c: number | null;
+  weather_tags: string[] | null;
+  cultural_tag: string | null;       // indian_ethnic|western|indo_western | NULL = unconfirmed
+  modesty_level: number | null;      // 1 .. 5 (5 = most covered)
+  layering_role: string | null;      // base|standalone|mid|outer|drape
+  accessory_role: string | null;
+  footwear_formality: number | null;
+  footwear_weather: string | null;
+  set_id: string | null;
+  set_required_components: string[] | null;
+  avoid_with: string[] | null;
+  tag_confidence: Record<string, number> | null;
+  photo_quality_flag: boolean;
   created_at: string;
 }
 
@@ -142,6 +169,11 @@ export interface DailyRecommendation {
   // Module B cache (migration 0019): pre-computed "another option" sets.
   alt_item_ids?: string[][];
   alt_cursor?: number;
+  // Engine v2 (migration 0020): stored factor contributions + confidence.
+  confidence?: number | null;
+  factor_breakdown?: Record<string, unknown> | null;
+  is_dual_pick?: boolean;
+  engine_version?: string | null;
 }
 
 // ---- Subscriptions (migration 0012) ----

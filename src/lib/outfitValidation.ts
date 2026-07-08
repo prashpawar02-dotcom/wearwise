@@ -72,6 +72,23 @@ export function isKurtaItem(item: RoleClassifiableItem): boolean {
   return text.includes("kurta") || text.includes("kurti");
 }
 
+/** True if the item is a belt specifically (accessory that must not sit over ethnic wear). */
+export function isBeltItem(item: RoleClassifiableItem): boolean {
+  return /\bbelt\b/.test(itemText(item));
+}
+
+/** True if the item is a saree/sari (a one-piece ethnic anchor). */
+export function isSareeItem(item: RoleClassifiableItem): boolean {
+  const cat = (item.category ?? "").trim().toLowerCase();
+  if (cat === "saree") return true;
+  return /\b(saree|sari)\b/.test(itemText(item));
+}
+
+/** True if the look has an ethnic anchor a dupatta can legitimately belong to. */
+export function hasEthnicAnchor(items: RoleClassifiableItem[]): boolean {
+  return items.some((i) => isKurtaItem(i) || isSareeItem(i) || /\b(anarkali|lehenga|choli|sherwani)\b/.test(itemText(i)));
+}
+
 /** Normalize a wardrobe item to a single garment role. */
 export function roleForItem(item: RoleClassifiableItem): GarmentRole {
   const cat = (item.category ?? "").trim().toLowerCase();
@@ -116,6 +133,19 @@ export function validateOutfitItems(items: RoleClassifiableItem[]): ValidationRe
   const plainUpperCount = items.filter(
     (it) => roleForItem(it) === "upper" && !isKurtaItem(it)
   ).length;
+
+  // --- cultural pairing legality (extends the fail-closed 3-place gate) ---
+  // Belts are not worn over a kurta or saree.
+  const beltCount = items.filter(isBeltItem).length;
+  if (beltCount >= 1 && (kurtaCount >= 1 || items.some(isSareeItem))) {
+    return { valid: false, reason: "A belt isn't worn over a kurta or saree." };
+  }
+  // A dupatta needs an ethnic anchor (kurta / saree / anarkali) — never a
+  // western top + pants or a western dress.
+  const dupattaCount = roles.filter((r) => r === "dupatta").length;
+  if (dupattaCount >= 1 && !hasEthnicAnchor(items)) {
+    return { valid: false, reason: "A dupatta needs a kurta or saree — it doesn't pair with a western outfit." };
+  }
 
   // --- one-piece rules ---
   if (onePiece > 1) {

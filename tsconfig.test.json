@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.ww-test-out",
+    "rootDir": ".",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "incremental": false,
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": [
+    "src/lib/types.ts",
+    "src/lib/outfitValidation.ts",
+    "src/lib/engine/types.ts",
+    "src/lib/engine/config.ts",
+    "src/lib/engine/classify.ts",
+    "src/lib/engine/guards.ts",
+    "src/lib/engine/filters.ts",
+    "src/lib/engine/scoring.ts",
+    "src/lib/engine/templates.ts",
+    "src/lib/engine/recommend.ts",
+    "tests/engine/fixtures.ts",
+    "tests/engine/golden.test.ts"
+  ]
+}

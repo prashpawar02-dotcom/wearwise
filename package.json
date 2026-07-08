@@ -9,7 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "preflight": "tsx --env-file=.env.local scripts/check-local-env.ts",
-    "audit:invalid-drafts": "tsx --env-file=.env.local scripts/audit-invalid-outfit-drafts.ts"
+    "audit:invalid-drafts": "tsx --env-file=.env.local scripts/audit-invalid-outfit-drafts.ts",
+    "test:engine": "node scripts/run-engine-tests.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
