@@ -14,6 +14,7 @@
   "include": [
     "src/lib/types.ts",
     "src/lib/outfitValidation.ts",
+    "src/lib/laundry.ts",
     "src/lib/engine/types.ts",
     "src/lib/engine/config.ts",
     "src/lib/engine/classify.ts",
@@ -23,6 +24,7 @@
     "src/lib/engine/templates.ts",
     "src/lib/engine/recommend.ts",
     "tests/engine/fixtures.ts",
-    "tests/engine/golden.test.ts"
+    "tests/engine/golden.test.ts",
+    "tests/engine/laundry.test.ts"
   ]
 }

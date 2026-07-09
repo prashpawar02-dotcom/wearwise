@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ItemEditor } from "./item-editor";
-import { OCCASIONS, AUTOTAG_PRIVACY_COPY, type Occasion, type WardrobeItem } from "@/lib/types";
+import { OCCASIONS, AUTOTAG_PRIVACY_COPY, type AvailabilityStatus, type Occasion, type WardrobeItem } from "@/lib/types";
 import { track } from "@/lib/analytics";
+import { cn } from "@/lib/utils";
 import { Sparkles, AlertCircle, Check, Pencil } from "lucide-react";
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
@@ -166,6 +167,14 @@ export function ItemView({ item: initial, imageUrl }: { item: WardrobeItem; imag
         </CardContent>
       </Card>
 
+      <AvailabilityControl
+        item={item}
+        onChanged={(next) => {
+          setItem((cur) => ({ ...cur, availability_status: next, in_wash_since: next === "in_wash" ? new Date().toISOString() : null }));
+          router.refresh();
+        }}
+      />
+
       <Button onClick={looksGood} size="full" disabled={confirming}>
         <Check className="h-4 w-4" /> {confirming ? "Saving…" : "Looks good"}
       </Button>
@@ -184,6 +193,78 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="flex items-start justify-between gap-4">
       <dt className="shrink-0 text-muted-foreground">{label}</dt>
       <dd className="text-right font-medium">{children}</dd>
+    </div>
+  );
+}
+
+/** One-tap availability control for the item detail (Phase 2 state machine). */
+function AvailabilityControl({
+  item,
+  onChanged,
+}: {
+  item: WardrobeItem;
+  onChanged: (next: AvailabilityStatus) => void;
+}) {
+  const [busy, setBusy] = useState<AvailabilityStatus | null>(null);
+  const current = (item.availability_status ?? "available") as AvailabilityStatus;
+
+  async function setState(next: AvailabilityStatus) {
+    if (next === current) return;
+    setBusy(next);
+    try {
+      const res = await fetch("/api/wardrobe/laundry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set_state", itemId: item.id, state: next }),
+      });
+      if (res.ok) {
+        if (next === "in_wash") track("laundry_marked", { item_count: 1, source: "item_detail" });
+        else if (next === "available") track("laundry_cleaned", { item_count: 1, source: "item_detail" });
+        onChanged(next);
+      }
+    } catch {
+      // Non-blocking — the item stays in its current state.
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const options: { key: AvailabilityStatus; label: string }[] = [
+    { key: "available", label: "Ready to wear" },
+    { key: "in_wash", label: "In the wash" },
+    { key: "archived", label: "Archived" },
+  ];
+
+  return (
+    <div className="rounded-ww-md border border-hairline bg-bone p-3">
+      <p className="ww-eyebrow text-plum">Availability</p>
+      <div className="mt-2 grid grid-cols-3 gap-2">
+        {options.map((o) => {
+          const active = current === o.key;
+          return (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => setState(o.key)}
+              disabled={busy !== null}
+              aria-pressed={active}
+              className={cn(
+                "rounded-full border px-2 py-2 text-[11px] font-medium transition-colors disabled:opacity-50",
+                active
+                  ? o.key === "available"
+                    ? "border-sage/50 bg-sage/15 text-[#5d7351]"
+                    : "border-plum bg-plum text-bone"
+                  : "border-hairline text-graphite hover:border-hairline-strong"
+              )}
+            >
+              {busy === o.key ? "…" : o.label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[11px] text-mist">
+        In-wash and archived pieces stay in your wardrobe but sit out of today&apos;s suggestions.
+      </p>
     </div>
   );
 }

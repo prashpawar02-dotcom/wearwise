@@ -33,6 +33,14 @@ function walk(dir) {
 walk(outDir);
 
 console.log("• running golden tests…\n");
-const res = spawnSync("node", [join(outDir, "tests", "engine", "golden.test.js")], { stdio: "inherit" });
+// Run every compiled engine test suite (golden + laundry + any future *.test.js).
+const testDir = join(outDir, "tests", "engine");
+const suites = readdirSync(testDir).filter((f) => f.endsWith(".test.js")).sort();
+let exitCode = 0;
+for (const suite of suites) {
+  console.log(`\n=== ${suite} ===`);
+  const res = spawnSync("node", [join(testDir, suite)], { stdio: "inherit" });
+  if ((res.status ?? 1) !== 0) exitCode = res.status ?? 1;
+}
 rmSync(outDir, { recursive: true, force: true });
-process.exit(res.status ?? 1);
+process.exit(exitCode);

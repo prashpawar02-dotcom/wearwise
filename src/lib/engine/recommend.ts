@@ -22,6 +22,7 @@ import { eligiblePool, candidateRejection } from "@/lib/engine/filters";
 import { buildCandidates } from "@/lib/engine/templates";
 import { scoreOutfit } from "@/lib/engine/scoring";
 import { engineRole } from "@/lib/engine/classify";
+import { constrainedInventoryNote } from "@/lib/laundry";
 
 const CORE_ROLES = new Set(["upper", "ethnic_upper", "bottom", "one_piece", "saree", "outerwear"]);
 const PARTIAL_CONFIDENCE_CAP = 0.45;
@@ -167,6 +168,9 @@ export function recommendOutfits(
     outfitStatus: usingPartial ? "partial" : "complete",
     missingSlots: usingPartial ? ["footwear"] : [],
     partialReason,
+    // Honest note when today's clean options were the best available under
+    // laundry pressure (Phase 2). Computed from the FULL wardrobe (incl. in_wash).
+    constrainedNote: constrainedInventoryNote(items, ctx.occasion),
     diagnostics,
   };
 }

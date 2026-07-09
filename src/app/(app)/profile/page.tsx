@@ -6,6 +6,7 @@ import { SignOutButton } from "@/components/nav/sign-out-button";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/Icon";
 import { DailyDropPreferences } from "./daily-drop-preferences";
+import { LaundryPreferences } from "./laundry-preferences";
 import { WeatherCityCard } from "./weather-city-card";
 import { EnableNotifications } from "@/components/wearwise/EnableNotifications";
 import { SubscriptionCard } from "./subscription-card";
@@ -85,6 +86,9 @@ export default async function ProfilePage() {
             weatherAdvice: profile?.weather_advice_enabled ?? true,
           }}
         />
+
+        {/* Laundry / post-wear check (Phase 2) */}
+        <LaundryPreferences initialEnabled={profile?.postwear_sheet_enabled ?? true} />
 
         {/* Give feedback — private beta */}
         <Card className="p-4">

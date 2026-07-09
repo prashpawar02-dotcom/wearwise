@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { track } from "@/lib/analytics";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/Chip";
@@ -11,6 +10,7 @@ import { Icon } from "@/components/ui/Icon";
 import { GarmentTile } from "@/components/wearwise/GarmentTile";
 import { OCCASIONS, type AvailabilityStatus, type Occasion, type WardrobeItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { daysInWash } from "@/lib/laundry";
 import {
   ZONE_META,
   ZONE_ORDER,
@@ -30,6 +30,26 @@ const itemName = (it: WardrobeItem) => it.user_facing_name ?? it.category ?? "Un
 const statusOf = (it: WardrobeItem): AvailabilityStatus =>
   (it.availability_status ?? "available") as AvailabilityStatus;
 
+/** "in wash · 3d" badge text from the real in_wash_since stamp. */
+function washAgeLabel(it: WardrobeItem): string {
+  const d = daysInWash(it);
+  if (d == null || d <= 0) return "in wash · today";
+  return `in wash · ${d}d`;
+}
+
+async function laundryPost(body: Record<string, unknown>): Promise<boolean> {
+  try {
+    const res = await fetch("/api/wardrobe/laundry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 interface ZoneBuckets {
   all: WardrobeItem[];
   available: WardrobeItem[];
@@ -40,10 +60,17 @@ interface ZoneBuckets {
 export function ClosetBoard({
   items,
   urls,
+  autoReturnCount = 0,
+  showAutoReturn = false,
 }: {
   items: WardrobeItem[];
   urls: Record<string, string>;
+  /** How many in-wash items look ready to come back (server-computed, Phase 2). */
+  autoReturnCount?: number;
+  /** Whether to show the quiet auto-return badge this visit (throttled server-side). */
+  showAutoReturn?: boolean;
 }) {
+  const router = useRouter();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -122,6 +149,15 @@ export function ClosetBoard({
     return list;
   }, [filter, query, items, wearable, notAvailable, zones]);
 
+  async function toggleItemWash(item: WardrobeItem) {
+    const from = statusOf(item);
+    const ok = await laundryPost({ action: "toggle", itemId: item.id });
+    if (!ok) return;
+    if (from === "available") track("laundry_marked", { item_count: 1, source: "item_card" });
+    else track("laundry_cleaned", { item_count: 1, source: "item_card" });
+    router.refresh();
+  }
+
   if (items.length === 0) return <EmptyState />;
 
   const filters: { key: FilterKey; label: string; count: number }[] = [
@@ -162,39 +198,6 @@ export function ClosetBoard({
         </div>
       </section>
 
-      {/* Availability summary strip — explains why some zones look thin */}
-      {notAvailable.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setFilter("laundry")}
-          className="flex w-full items-center gap-3 rounded-ww-md border border-hairline bg-bone p-3 text-left shadow-ww-xs transition-colors hover:border-hairline-strong"
-        >
-          <span className="flex -space-x-2">
-            {notAvailable.slice(0, 3).map((it) => (
-              <span key={it.id} className="h-9 w-9 overflow-hidden rounded-full border-2 border-bone bg-stone">
-                {urls[it.image_path] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={urls[it.image_path]} alt="" className="h-full w-full object-cover opacity-80" />
-                ) : (
-                  <GarmentTile fill kind={garmentKindForItem(it)} color={colorToHex(it.color)} rounded="rounded-none" className="border-0" />
-                )}
-              </span>
-            ))}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-charcoal">
-              {[inWash.length > 0 ? `${inWash.length} in wash` : null, unavailableCount > 0 ? `${unavailableCount} unavailable` : null]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
-            <span className="block text-xs text-graphite">Excluded from today&apos;s suggestions.</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-plum">
-            View laundry <Icon.ArrowRight className="h-3.5 w-3.5" />
-          </span>
-        </button>
-      )}
-
       {/* Closet Board hero */}
       <section className="overflow-hidden rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm">
         <RailZone buckets={zones.hanging} urls={urls} />
@@ -207,6 +210,16 @@ export function ClosetBoard({
         <ZoneDivider />
         <TrayZone buckets={zones.accessories} urls={urls} />
       </section>
+
+      {/* Laundry basket — the dedicated section at the bottom of the board */}
+      <LaundrySection
+        inWash={inWash}
+        unavailableCount={unavailableCount}
+        urls={urls}
+        autoReturnCount={autoReturnCount}
+        showAutoReturn={showAutoReturn}
+        onChanged={() => router.refresh()}
+      />
 
       {/* Quick filters */}
       <div className="flex flex-wrap gap-2 pt-1">
@@ -226,7 +239,7 @@ export function ClosetBoard({
       ) : (
         <div className="grid grid-cols-2 gap-3">
           {filtered.map((item) => (
-            <ItemCard key={item.id} item={item} url={urls[item.image_path]} />
+            <ItemCard key={item.id} item={item} url={urls[item.image_path]} onToggle={() => toggleItemWash(item)} />
           ))}
         </div>
       )}
@@ -300,6 +313,176 @@ function Stat({ value, label, tone }: { value: number; label: string; tone?: "ch
       </span>
       <span className="ml-1 text-xs text-graphite">{label}</span>
     </div>
+  );
+}
+
+// ===================== Laundry section =====================
+
+function LaundrySection({
+  inWash,
+  unavailableCount,
+  urls,
+  autoReturnCount,
+  showAutoReturn,
+  onChanged,
+}: {
+  inWash: WardrobeItem[];
+  unavailableCount: number;
+  urls: Record<string, string>;
+  autoReturnCount: number;
+  showAutoReturn: boolean;
+  onChanged: () => void;
+}) {
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  const showBadge = showAutoReturn && autoReturnCount > 0 && !dismissed && inWash.length > 0;
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function laundryDone(ids: string[]) {
+    if (ids.length === 0) return;
+    setBusy(true);
+    const ok = await laundryPost({ action: "bulk_clean", itemIds: ids });
+    if (ok) track("laundry_cleaned", { item_count: ids.length, source: "bulk" });
+    setBusy(false);
+    setSelectMode(false);
+    setSelected(new Set());
+    if (ok) onChanged();
+  }
+
+  async function dismissReturn() {
+    setDismissed(true);
+    await laundryPost({ action: "dismiss_return_prompt" });
+  }
+
+  // Positive empty state — the whole point of the laundry system working.
+  if (inWash.length === 0) {
+    return (
+      <section className="rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm">
+        <div className="flex items-center gap-2">
+          <Icon.Basket className="h-4 w-4 text-sage" />
+          <p className="ww-eyebrow text-plum">Laundry</p>
+        </div>
+        <p className="mt-1.5 text-sm text-graphite">Nothing in the wash. Everything&apos;s ready to wear.</p>
+        {unavailableCount > 0 && (
+          <p className="mt-1 text-xs text-mist">{unavailableCount} set aside · not in today&apos;s suggestions.</p>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Icon.Basket className="h-4 w-4 text-plum" />
+          <p className="ww-eyebrow text-plum">Laundry</p>
+          <span className="text-xs text-graphite">
+            {inWash.length} in wash{unavailableCount > 0 ? ` · ${unavailableCount} set aside` : ""}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setSelectMode((v) => !v);
+            setSelected(new Set());
+          }}
+          className="text-xs font-medium text-plum hover:underline"
+        >
+          {selectMode ? "Cancel" : "Laundry done"}
+        </button>
+      </div>
+
+      {/* Quiet auto-return nudge (never a push) */}
+      {showBadge && !selectMode && (
+        <div className="mt-3 flex items-center gap-3 rounded-ww-md border border-sage/30 bg-sage/[0.08] p-3">
+          <span className="min-w-0 flex-1 text-sm text-charcoal">
+            {autoReturnCount === 1
+              ? "1 item might be back from laundry — mark it clean when it is."
+              : `${autoReturnCount} items might be back from laundry — mark what's clean?`}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectMode(true);
+              setSelected(new Set(inWash.map((i) => i.id)));
+            }}
+            className="shrink-0 rounded-full bg-sage/90 px-3 py-1 text-xs font-medium text-charcoal hover:bg-sage"
+          >
+            Review
+          </button>
+          <button type="button" onClick={dismissReturn} aria-label="Dismiss" className="shrink-0 text-mist hover:text-charcoal">
+            <Icon.Close className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Basket — thumbnails with "in wash · Nd" badges */}
+      <div className="mt-3 rounded-ww-md border border-dashed border-hairline-strong bg-stone/20 p-3">
+        <div className="grid grid-cols-4 gap-2.5 sm:grid-cols-5">
+          {inWash.map((it) => {
+            const isSel = selected.has(it.id);
+            return (
+              <button
+                key={it.id}
+                type="button"
+                onClick={() => selectMode && toggleSelect(it.id)}
+                aria-pressed={selectMode ? isSel : undefined}
+                className={cn(
+                  "group relative overflow-hidden rounded-ww-sm border bg-stone text-left transition-transform",
+                  selectMode ? "cursor-pointer active:scale-[0.98]" : "cursor-default",
+                  isSel ? "border-plum ring-2 ring-plum/40" : "border-hairline"
+                )}
+              >
+                <div className="aspect-square">
+                  {urls[it.image_path] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={urls[it.image_path]} alt={itemName(it)} className="h-full w-full object-cover opacity-80" />
+                  ) : (
+                    <GarmentTile fill kind={garmentKindForItem(it)} color={colorToHex(it.color)} rounded="rounded-none" className="border-0" />
+                  )}
+                </div>
+                <span className="absolute inset-x-0 bottom-0 truncate bg-charcoal/55 px-1 py-0.5 text-[9px] font-medium text-bone">
+                  {washAgeLabel(it)}
+                </span>
+                {selectMode && isSel && (
+                  <span className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-plum text-bone">
+                    <Icon.Check className="h-2.5 w-2.5" />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectMode ? (
+        <div className="mt-3 flex items-center gap-2">
+          <Button size="sm" disabled={busy || selected.size === 0} onClick={() => laundryDone([...selected])} className="flex-1">
+            {busy ? "Updating…" : selected.size > 0 ? `Mark ${selected.size} clean` : "Select items"}
+          </Button>
+          <button
+            type="button"
+            onClick={() => setSelected(new Set(inWash.map((i) => i.id)))}
+            className="rounded-full border border-hairline px-3 py-2 text-xs font-medium text-graphite hover:text-charcoal"
+          >
+            Select all
+          </button>
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-mist">Excluded from today&apos;s suggestions until they&apos;re back.</p>
+      )}
+    </section>
   );
 }
 
@@ -523,8 +706,7 @@ const AVAIL_TONE: Record<"wash" | "unavailable", string> = {
   unavailable: "bg-stone text-graphite",
 };
 
-function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
-  const router = useRouter();
+function ItemCard({ item, url, onToggle }: { item: WardrobeItem; url?: string; onToggle: () => void | Promise<void> }) {
   const [busy, setBusy] = useState(false);
 
   const occ = (item.occasion_tags ?? []).slice(0, 2) as Occasion[];
@@ -533,20 +715,10 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
   const worn = lastWornLabel(item);
   const status = statusOf(item);
 
-  async function setAvailability(next: AvailabilityStatus) {
+  async function handleToggle() {
     setBusy(true);
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setBusy(false); return; }
-    await supabase
-      .from("wardrobe_items")
-      .update({ availability_status: next })
-      .eq("id", item.id)
-      .eq("user_id", user.id);
-    // Status codes only — no item identity.
-    track("wardrobe_availability_changed", { from_status: status, to_status: next });
+    await onToggle();
     setBusy(false);
-    router.refresh();
   }
 
   return (
@@ -590,11 +762,11 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
         </div>
       </Link>
 
-      {/* Compact availability action */}
+      {/* Compact availability action (one-tap toggle, Phase 2) */}
       <div className="flex items-center justify-end px-2.5 pb-2.5 pt-2">
         <button
           type="button"
-          onClick={() => setAvailability(status === "available" ? "in_wash" : "available")}
+          onClick={handleToggle}
           disabled={busy}
           aria-label={status === "available" ? "Mark in wash" : "Mark available"}
           className={cn(
@@ -604,7 +776,7 @@ function ItemCard({ item, url }: { item: WardrobeItem; url?: string }) {
               : "border-sage/40 bg-sage/10 text-[#5d7351] hover:bg-sage/20"
           )}
         >
-          {busy ? "…" : status === "available" ? "Mark in wash" : "Mark available"}
+          {busy ? "…" : status === "available" ? "Mark in wash" : "Mark clean"}
         </button>
       </div>
     </div>

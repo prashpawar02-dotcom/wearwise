@@ -91,8 +91,13 @@ const config: Config = {
       },
       keyframes: {
         "fade-in": { from: { opacity: "0", transform: "translateY(6px)" }, to: { opacity: "1", transform: "translateY(0)" } },
+        // Bottom-sheet spring-in (§4.3): rise + fade, ~220ms.
+        "sheet-in": { from: { opacity: "0", transform: "translateY(16px)" }, to: { opacity: "1", transform: "translateY(0)" } },
       },
-      animation: { "fade-in": "fade-in 0.35s ease-out" },
+      animation: {
+        "fade-in": "fade-in 0.35s ease-out",
+        "sheet-in": "sheet-in 0.22s cubic-bezier(0.16,1,0.3,1)",
+      },
     },
   },
   plugins: [require("tailwindcss-animate")],

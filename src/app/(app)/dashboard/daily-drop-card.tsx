@@ -8,7 +8,9 @@ import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/button";
 import { SaveLookButton } from "@/components/wearwise/SaveLookButton";
+import { PostWearSheet } from "@/components/wearwise/PostWearSheet";
 import { track } from "@/lib/analytics";
+import type { Disposition } from "@/lib/laundry";
 
 /**
  * Today's Drop card — renders a prepared daily_recommendation on the dashboard.
@@ -23,6 +25,7 @@ export interface DailyDropItemView {
   sub: string | null;
   image: string | null;
   lastWornAt: string | null;
+  category?: string | null;
 }
 
 export interface DailyDropView {
@@ -62,10 +65,20 @@ const REPEAT_COPY: Record<RepeatStatus, string> = {
   multiple_recent: "Repeat warning: a few pieces were worn recently",
 };
 
-export function DailyDropCard({ drop }: { drop: DailyDropView }) {
+export function DailyDropCard({
+  drop,
+  postwearEnabled = true,
+}: {
+  drop: DailyDropView;
+  postwearEnabled?: boolean;
+}) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [worn, setWorn] = useState(drop.status === "worn");
+
+  // Post-wear laundry sheet (Phase 2) — opens right after "Wore It".
+  const [postWearOpen, setPostWearOpen] = useState(false);
+  const [postWearSaving, setPostWearSaving] = useState(false);
 
   // Action state (swap + another option)
   const [panelOpen, setPanelOpen] = useState(false);
@@ -135,6 +148,56 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
 
     setWorn(true);
     setSaving(false);
+
+    // Post-wear laundry sheet (Phase 2): quietly ask where each piece goes,
+    // unless the user has turned it off. We don't refresh yet — the sheet
+    // resolves the laundry state, then we refresh once on close.
+    if (postwearEnabled && drop.items.length > 0) {
+      setPostWearOpen(true);
+    } else {
+      router.refresh();
+    }
+  }
+
+  async function persistPostWear(dispositions: Record<string, Disposition>, opts?: { askMeLess?: boolean }) {
+    setPostWearSaving(true);
+    try {
+      await fetch("/api/wardrobe/laundry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "postwear",
+          dispositions: drop.items.map((it) => ({ itemId: it.id, to: dispositions[it.id] ?? "wardrobe" })),
+        }),
+      });
+      const washed = Object.values(dispositions).filter((d) => d === "wash").length;
+      track("postwear_sheet_completed", {
+        item_count: drop.items.length,
+        washed_count: washed,
+        wardrobe_count: drop.items.length - washed,
+        via: opts?.askMeLess ? "ask_me_less" : "done",
+      });
+      if (washed > 0) track("laundry_marked", { item_count: washed, source: "postwear" });
+      if (opts?.askMeLess) {
+        await fetch("/api/wardrobe/laundry", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "ask_me_less" }),
+        });
+      }
+    } catch {
+      // Non-blocking: the outfit is already logged worn. Laundry state can be
+      // fixed from the Wardrobe if this write failed.
+    } finally {
+      setPostWearSaving(false);
+      setPostWearOpen(false);
+      router.refresh();
+    }
+  }
+
+  function dismissPostWear() {
+    track("postwear_sheet_dismissed", { item_count: drop.items.length });
+    setPostWearOpen(false);
     router.refresh();
   }
 
@@ -251,6 +314,7 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
   const busy = saving || updating;
 
   return (
+    <>
     <Card variant="stack" className="mt-5 overflow-hidden p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -409,6 +473,16 @@ export function DailyDropCard({ drop }: { drop: DailyDropView }) {
         </div>
       )}
     </Card>
+
+    <PostWearSheet
+      open={postWearOpen}
+      saving={postWearSaving}
+      items={drop.items.map((it) => ({ id: it.id, label: it.label, image: it.image, category: it.category ?? null }))}
+      onDone={(d) => persistPostWear(d)}
+      onAskMeLess={(d) => persistPostWear(d, { askMeLess: true })}
+      onDismiss={dismissPostWear}
+    />
+    </>
   );
 }
 

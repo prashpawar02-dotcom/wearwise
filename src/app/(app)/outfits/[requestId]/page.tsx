@@ -112,7 +112,19 @@ export default async function OutfitsPage({ params }: { params: { requestId: str
                   </div>
 
                   <div className="mt-4 flex items-center gap-2">
-                    <WornTodayButton suggestionId={s.id} itemIds={s.item_ids} />
+                    <WornTodayButton
+                      suggestionId={s.id}
+                      itemIds={s.item_ids}
+                      items={s.item_ids
+                        .map((id) => itemById.get(id))
+                        .filter((it): it is WardrobeItem => Boolean(it))
+                        .map((it) => ({
+                          id: it.id,
+                          label: it.user_facing_name ?? it.category ?? "Item",
+                          image: urls[it.image_path] ?? null,
+                          category: it.category,
+                        }))}
+                    />
                     <SaveLookButton itemIds={s.item_ids} title={s.title} suggestionId={s.id} />
                     <ShareLookButton suggestionIds={[s.id]} />
                   </div>

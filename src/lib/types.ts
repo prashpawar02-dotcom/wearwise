@@ -28,7 +28,7 @@ export const PATTERNS = [
 export type RequestStatus = "pending" | "in_review" | "fulfilled" | "archived";
 export type SuggestionStatus = "draft" | "approved" | "rejected";
 export type AiTagStatus = "analyzing" | "tagged" | "needs_review" | "failed";
-export type AvailabilityStatus = "available" | "in_wash" | "unavailable";
+export type AvailabilityStatus = "available" | "in_wash" | "unavailable" | "archived";
 
 export const AUTOTAG_PRIVACY_COPY =
   "We use AI to identify clothing type, colour, and style from your wardrobe photos. Your wardrobe stays private.";
@@ -55,6 +55,13 @@ export interface Profile {
   excluded_colors?: string[] | null;
   excluded_categories?: string[] | null;
   excluded_footwear?: string[] | null;
+  // Laundry / Availability (migration 0021, Phase 2). All optional so older
+  // reads compile; the DB carries safe defaults.
+  postwear_sheet_enabled?: boolean;
+  postwear_prompt_dismissals?: number;
+  wash_cycle_days?: number;
+  laundry_return_prompt_at?: string | null;
+  laundry_wash_note_at?: string | null;
 }
 
 export interface WardrobeItem {

@@ -138,7 +138,9 @@ export default async function DashboardPage() {
         {/* Today's Drop — cached daily recommendation (Phase 2). Prepared drop
             renders as a prominent card; a failed prepare shows honest copy;
             when there's no drop yet the section is simply absent. */}
-        {todayDrop?.view && <DailyDropCard drop={todayDrop.view} />}
+        {todayDrop?.view && (
+          <DailyDropCard drop={todayDrop.view} postwearEnabled={profile?.postwear_sheet_enabled ?? true} />
+        )}
         {todayDrop?.failed && (
           <Card className="mt-5 border-champagne/30 bg-champagne/[0.08] p-4">
             <p className="font-medium text-charcoal">Today&apos;s pick isn&apos;t ready</p>
@@ -629,6 +631,7 @@ async function loadTodayDrop(
       sub: [m.category, m.color].filter(Boolean).join(" · ") || null,
       image: urls[m.image_path] ?? null,
       lastWornAt: m.last_worn_at,
+      category: m.category,
     }));
 
   // If every item from today's pick has since been deleted, don't show an empty

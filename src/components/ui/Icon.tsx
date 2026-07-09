@@ -67,6 +67,15 @@ export const Icon = {
     "0 0 24 24",
     stroke
   ),
+  Droplet: base(<path d="M12 3.2l5 6.3a6.4 6.4 0 1 1-10 0z" />, "0 0 24 24", stroke),
+  Basket: base(
+    <>
+      <path d="M5 9h14l-1.2 9.2a2 2 0 0 1-2 1.8H8.2a2 2 0 0 1-2-1.8z" />
+      <path d="M9 9l2.2-4.5M15 9l-2.2-4.5M3.5 9h17" />
+    </>,
+    "0 0 24 24",
+    stroke
+  ),
   ArrowRight: base(<path d="M5 12h14M13 6l6 6-6 6" />, "0 0 24 24", stroke),
   ArrowLeft: base(<path d="M19 12H5M11 6l-6 6 6 6" />, "0 0 24 24", stroke),
   Plus: base(<path d="M12 5v14M5 12h14" />, "0 0 24 24", stroke),

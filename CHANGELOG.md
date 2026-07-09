@@ -1,5 +1,69 @@
 # WearWise — Changelog
 
+## Phase 2 — Laundry / Availability System (2026-07-09)
+
+The app now always knows what's clean, with zero nagging. Availability is a hard
+filter everywhere (already true in the engine); Phase 2 makes the whole loop
+around it real: a state machine, a quiet post-wear flow, a laundry basket, a soft
+auto-return nudge, and honest constrained-inventory copy.
+
+**Schema — migration `0021_laundry_availability.sql` (+ down), applied to the
+`wearwise` project (additive, reversible).**
+
+- `wardrobe_items.availability_status` CHECK widened to add `archived` (legacy
+  `unavailable` kept). `in_wash_since` reconciled with status; partial index on
+  `(user_id, in_wash_since)` for fast auto-return scans.
+- `profiles`: `postwear_sheet_enabled`, `postwear_prompt_dismissals`,
+  `wash_cycle_days` (default 4), `laundry_return_prompt_at`, `laundry_wash_note_at`.
+- New `laundry_wear_stats` table (per-category wear/wash counters — learning
+  stub, counts only) with owner-only RLS (select/insert/update/delete). Supabase
+  security advisor confirms RLS enabled + policies present, no new lints.
+
+**Engine + logic (pure, tested).**
+
+- `src/lib/laundry.ts` — state transitions that keep `in_wash_since` honest
+  (`toInWash`/`toAvailable`/`toArchived`/`toggleWashTransition`), post-wear smart
+  defaults (`washDisposition`), wash-cycle estimate (`washCycleDaysFor`: 4d
+  default, 14d dry-clean), soft auto-return (`readyToReturn`/`countReadyToReturn`),
+  and the constrained-inventory honesty note (`constrainedInventoryNote`).
+- `recommendOutfits` now returns `constrainedNote` on its result payload,
+  computed from the full wardrobe (incl. in_wash). Availability filter confirmed
+  as the single gate for drop, backups, Style Me, and swap candidates.
+
+**Surfaces (each ships empty/loading/error states + telemetry).**
+
+- `Sheet` bottom-sheet primitive (grabber, blur, 220ms spring, reduced-motion,
+  Esc/scroll-lock) + global `prefers-reduced-motion` guard in `globals.css`.
+- `PostWearSheet` — after "Wore It", per-item Wardrobe/Wash chips pre-answered
+  with smart defaults (≤2 taps: one "Done"), bulk apply, and "Ask me less"
+  (silences the sheet after 3, re-enable in You). Wired into the daily drop card
+  and the occasion Wore-It button.
+- Wardrobe: dedicated **Laundry basket** section (thumbnails, "in wash · Nd"
+  badges, count header, multi-select "Laundry done", positive empty state:
+  "Nothing in the wash. Everything's ready to wear."), a quiet **auto-return**
+  badge (throttled, never a push), item-card one-tap toggle, and an item-detail
+  availability control (available / in wash / archived).
+- Drop reasoning gains the constrained-inventory line when >60% of an
+  occasion-critical category is in the wash — once per wash-cycle, no push.
+
+**Server.** Single write path `/api/wardrobe/laundry` (toggle, set_state,
+bulk_clean, postwear, ask_me_less, dismiss_return_prompt, set_postwear_enabled) —
+keeps `in_wash_since` honest, updates the learning stub, enforces the "ask me
+less" + throttle preferences. Owner-scoped via RLS.
+
+**Telemetry.** `laundry_marked`, `laundry_cleaned`, `postwear_sheet_shown`,
+`postwear_sheet_completed`, `postwear_sheet_dismissed`, `ask_me_less_activated`
+(+ `postwear_pref_changed`).
+
+**Tests / gates.** New `tests/engine/laundry.test.ts` (28 assertions): in_wash
+/archived/unavailable never surface via `eligiblePool` or `recommendOutfits`
+(drop/backups/Style Me path); `isWearable` predicate (shared by swap); transitions
+set/clear `in_wash_since`; auto-return timing (4d vs 14d dry-clean); smart
+defaults; constrained note presence/absence + engine payload. Runner extended to
+execute all `tests/engine/*.test.js`. `tsc` clean · `next lint` clean · engine
+suite 62 + laundry 28 = 90 green.
+
+
 ## Phase 1 hotfix 2 — Everyday formality window + normalization diagnostics (2026-07-08)
 
 Fixes a production report where `/api/admin/engine-qa?occasion=work` returned

@@ -91,3 +91,16 @@ body {
   .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 }
+
+/* Accessibility (handbook §4.4): honour the OS "reduce motion" setting
+   everywhere — no sheet spring, no fades, no transitions for those users. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

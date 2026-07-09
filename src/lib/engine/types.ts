@@ -174,6 +174,9 @@ export interface RecommendationResult {
   missingSlots: MissingSlot[];
   /** Why a partial result was returned (present only in partial mode). */
   partialReason?: PartialReason;
+  /** Honest one-liner when an occasion-critical category is mostly in the wash
+   *  (Phase 2). Null when the wardrobe isn't laundry-constrained. */
+  constrainedNote?: string | null;
   /** Diagnostics for the admin QA route (not shown to users). */
   diagnostics: {
     poolSize: number;

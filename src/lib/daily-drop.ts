@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getWeatherContext } from "@/lib/weather";
 import { isWearableItem } from "@/lib/wardrobe";
 import { defaultContext } from "@/lib/outfit-engine";
+import { constrainedInventoryNote, DEFAULT_WASH_CYCLE_DAYS, daysSinceDate } from "@/lib/laundry";
 import { explainSelectedOutfit } from "@/lib/engine/recommend";
 import type { EngineOccasion } from "@/lib/engine/types";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
@@ -247,6 +248,9 @@ interface ReasoningOpts {
   layerIncluded: boolean;
   shoesIncluded: boolean;
   laundryExcluded: number;
+  /** Honest constrained-inventory line (Phase 2); replaces the generic skip
+   *  line when an occasion-critical category is mostly in the wash. */
+  constrainedNote?: string | null;
 }
 
 /** Build honest, specific "why it works" copy from the real chosen items. */
@@ -267,7 +271,11 @@ function buildReasoning(items: WardrobeItem[], opts: ReasoningOpts): string {
   if (!opts.shoesIncluded) {
     parts.push("No footwear was available, so add a pair of shoes to finish it.");
   }
-  if (opts.laundryExcluded > 0) {
+  // Prefer the specific constrained-inventory honesty line when the wardrobe is
+  // laundry-pressured; otherwise fall back to the plain skip count.
+  if (opts.constrainedNote) {
+    parts.push(opts.constrainedNote);
+  } else if (opts.laundryExcluded > 0) {
     parts.push(`${opts.laundryExcluded} item${opts.laundryExcluded === 1 ? "" : "s"} in the wash ${opts.laundryExcluded === 1 ? "was" : "were"} skipped.`);
   }
   return parts.join(" ");
@@ -476,6 +484,15 @@ export async function prepareDailyDrop(
   const engineOccasion: EngineOccasion = plan.core === "traditional" ? "ethnic" : "casual";
   const engineExplain = explainSelectedOutfit(plan.items, defaultContext(engineOccasion));
 
+  // Constrained-inventory honesty line (Phase 2): when an occasion-critical
+  // category is mostly in the wash, say so once per wash-cycle (never a push).
+  const occasionWordForNote = plan.core === "traditional" ? "ethnic" : "everyday";
+  const rawConstrained = constrainedInventoryNote(allItems, occasionWordForNote);
+  const washCycle = profile.wash_cycle_days ?? DEFAULT_WASH_CYCLE_DAYS;
+  const daysSinceWashNote = daysSinceDate(profile.laundry_wash_note_at ?? null);
+  const constrainedNote =
+    rawConstrained && (daysSinceWashNote == null || daysSinceWashNote >= washCycle) ? rawConstrained : null;
+
   const rec = await upsertRecommendation(supabase, {
     user_id: userId,
     local_date: localDate,
@@ -496,6 +513,7 @@ export async function prepareDailyDrop(
       layerIncluded: plan.layerIncluded,
       shoesIncluded: plan.shoesIncluded,
       laundryExcluded,
+      constrainedNote,
     }),
     daily_insight: buildInsight(plan.items, profile.show_quiet_gems),
     fail_reason: null,
@@ -504,6 +522,14 @@ export async function prepareDailyDrop(
   if (!rec) {
     // The outfit was fine but the write failed — stay honest, don't fake success.
     return { status: "failed", localDate, reason: "db_error", warning: tzWarning, recommendation: null };
+  }
+
+  // Record that we surfaced the constrained note this cycle (throttle → no nag).
+  if (constrainedNote) {
+    await supabase
+      .from("profiles")
+      .update({ laundry_wash_note_at: new Date().toISOString() })
+      .eq("id", userId);
   }
 
   return { status: "prepared", localDate, warning: tzWarning, recommendation: rec };
