@@ -8,13 +8,16 @@ import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 /**
- * SwapSheet — the Phase 3 trust surface (handbook §5 P3).
- * Three separated paths over the outfit: Swap one thing (lock-and-replace
- * candidates -> [Keep it] [Try another] [Put back]), Change the mood (mood
- * chips), and New mood (full re-theme). Server-validated + cap-gated (3 swaps/
- * day, 2 options/drop; first 3 sessions exempt). Put back restores the exact
- * pre-swap outfit. Cap + no-candidate states are specific; a "Not for me" path
- * records feedback (always free) with an immediate ack.
+ * SwapSheet — SLOT-FIRST, single-item swap ONLY (Phase 3 blocker fix).
+ *
+ * Flow: tap "Swap one thing" -> this sheet opens on a slot picker
+ * ("What do you want to swap?") showing only the slots present in today's
+ * outfit. Nothing is fetched until a slot is chosen. Choosing a slot fetches
+ * replacements for THAT slot only (every other item stays locked); applying one
+ * changes exactly one item. Result row = Keep it / Try another / Put back.
+ *
+ * This sheet NEVER changes the whole outfit — "Another option" is a completely
+ * separate button + handler on the card and does not open this sheet.
  */
 export interface SwapSheetItem {
   id: string;
@@ -31,16 +34,8 @@ export interface CapView {
 }
 
 type Candidate = { id: string; label: string; sub: string | null; image: string | null; reason: string };
-type View = "menu" | "candidates" | "result" | "cap" | "feedback" | "ack";
-type Kind = "swap" | "mood" | "option";
+type View = "slots" | "candidates" | "result" | "cap" | "feedback" | "ack";
 
-const MOODS: [string, string][] = [
-  ["more_formal", "More formal"],
-  ["more_casual", "More casual"],
-  ["more_comfortable", "More comfortable"],
-  ["more_modest", "More modest"],
-  ["weather_safer", "Weather-safer"],
-];
 const REASONS: [string, string][] = [
   ["too_formal", "Too formal"],
   ["not_my_style", "Not my style"],
@@ -55,7 +50,6 @@ export function SwapSheet({
   recommendationId,
   items,
   cap: initialCap,
-  initialAction = null,
   onChanged,
 }: {
   open: boolean;
@@ -63,10 +57,10 @@ export function SwapSheet({
   recommendationId: string;
   items: SwapSheetItem[];
   cap: CapView | null;
-  initialAction?: "option" | null;
+  /** Called after an applied change so the parent can refresh the outfit. */
   onChanged: () => void;
 }) {
-  const [view, setView] = useState<View>("menu");
+  const [view, setView] = useState<View>("slots");
   const [busy, setBusy] = useState(false);
   const [cap, setCap] = useState<CapView | null>(initialCap);
   const [selected, setSelected] = useState<SwapSheetItem | null>(null);
@@ -78,40 +72,40 @@ export function SwapSheet({
   const [capMsg, setCapMsg] = useState<string | null>(null);
   const [ack, setAck] = useState<string | null>(null);
   const [hasUndo, setHasUndo] = useState(false);
-  const [lastKind, setLastKind] = useState<Kind>("swap");
-  const [, setLastMood] = useState<string | null>(null);
 
+  // Fresh slot picker each time the sheet opens. NEVER auto-fetches candidates
+  // and NEVER triggers another-option — this sheet is single-item swap only.
   useEffect(() => {
     if (!open) return;
-    setView("menu"); setBusy(false); setCap(initialCap); setSelected(null);
+    setView("slots"); setBusy(false); setCap(initialCap); setSelected(null);
     setCandidates([]); setSlotName(null); setMessage(null); setReason(null);
     setWhy([]); setCapMsg(null); setAck(null); setHasUndo(false);
-    if (initialAction === "option") void runOption();
-    else track("swap_sheet_opened", { item_count: items.length });
+    track("swap_sheet_opened", { item_count: items.length });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   if (!open) return null;
 
-  function applyResult(data: { reason?: string; whyThisWorks?: string[]; cap?: CapView }, kind: Kind) {
+  function applyResult(data: { reason?: string; whyThisWorks?: string[]; cap?: CapView }) {
     setReason(data.reason ?? null);
     setWhy(data.whyThisWorks ?? []);
     if (data.cap) setCap(data.cap);
     setHasUndo(true);
-    setLastKind(kind);
     setView("result");
     onChanged();
   }
 
-  function handleCap(kind: "swap" | "option", data: { message?: string; cap?: CapView }) {
+  function handleCap(data: { message?: string; cap?: CapView }) {
     if (data.cap) setCap(data.cap);
     setCapMsg(data.message ?? null);
-    track(kind === "swap" ? "cap_hit_swap" : "cap_hit_option", {});
+    track("cap_hit_swap", {});
     setView("cap");
   }
 
+  // Step 1 -> 2: a slot was chosen; fetch replacements for THAT slot only.
   async function loadCandidates(item: SwapSheetItem) {
     setBusy(true); setSelected(item); setMessage(null);
+    track("swap_slot_selected", { slot: item.slot ?? "item" });
     track("swap_requested", {});
     try {
       const res = await fetch(
@@ -119,11 +113,13 @@ export function SwapSheet({
       );
       const data = await res.json().catch(() => ({}));
       if (data.cap) setCap(data.cap);
-      setSlotName(data.slotLabel ?? null);
+      setSlotName(data.slotLabel ?? item.slot ?? null);
       if (data.status === "ok") { setCandidates(data.candidates ?? []); setMessage(null); }
+      else if (data.status === "stale") { setMessage(null); onChanged(); onClose(); return; }
       else { setCandidates([]); setMessage(data.message ?? "No clean replacement for this piece right now."); }
       setView("candidates");
     } catch {
+      setCandidates([]);
       setMessage("We couldn't load options just now. Please try again.");
       setView("candidates");
     } finally { setBusy(false); }
@@ -138,47 +134,15 @@ export function SwapSheet({
         body: JSON.stringify({ recommendationId, replaceItemId: selected.id, replacementItemId: candidateId }),
       });
       const data = await res.json().catch(() => ({}));
-      if (data.status === "updated") applyResult(data, "swap");
-      else if (data.status === "cap_reached") handleCap("swap", data);
-      else if (data.status === "stale") { setMessage(data.message ?? "That option just changed — here are fresh matches."); if (selected) void loadCandidates(selected); }
-      else setMessage("We couldn't swap that piece. Please try again.");
+      if (data.status === "updated") applyResult(data);
+      else if (data.status === "cap_reached") handleCap(data);
+      else if (data.status === "stale") {
+        // The outfit changed under us (a piece went to the wash). Refresh + close.
+        setMessage(data.message ?? "That outfit just changed — refreshing.");
+        onChanged(); onClose();
+      } else setMessage("We couldn't swap that piece. Please try again.");
     } catch {
       setMessage("We couldn't swap that piece. Please try again.");
-    } finally { setBusy(false); }
-  }
-
-  async function applyMood(mood: string) {
-    setBusy(true); setLastMood(mood);
-    try {
-      const res = await fetch("/api/daily-drop/mood-swap", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendationId, mood }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.status === "updated") applyResult(data, "mood");
-      else if (data.status === "cap_reached") handleCap("swap", data);
-      else { setMessage(data.message ?? "Nothing clean changes that without breaking the look."); setSlotName(null); setView("candidates"); }
-    } catch {
-      setMessage("We couldn't adjust the mood just now. Please try again.");
-      setView("candidates");
-    } finally { setBusy(false); }
-  }
-
-  async function runOption() {
-    setBusy(true);
-    track("another_option", {});
-    try {
-      const res = await fetch("/api/daily-drop/another-option", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendationId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.status === "updated") applyResult(data, "option");
-      else if (data.status === "cap_reached") handleCap("option", data);
-      else if (data.status === "not_enough_items") { setMessage("Add a few more available clothes to create another strong option."); setSlotName(null); setView("candidates"); }
-      else setMessage("We couldn't create another option right now. Please try again.");
-    } catch {
-      setMessage("We couldn't create another option right now. Please try again.");
     } finally { setBusy(false); }
   }
 
@@ -189,15 +153,11 @@ export function SwapSheet({
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recommendationId }),
       });
+      track("swap_reverted", {});
       setHasUndo(false);
       onChanged();
-      setView("menu");
+      setView("slots");
     } finally { setBusy(false); }
-  }
-
-  function tryAnother() {
-    if (lastKind === "swap") setView("candidates");
-    else void runOption();
   }
 
   async function submitFeedback(r: string | null) {
@@ -214,57 +174,43 @@ export function SwapSheet({
     } finally { setBusy(false); }
   }
 
+  const lockedContext = selected
+    ? items.filter((i) => i.id !== selected.id).map((i) => i.label)
+    : [];
+
   const title =
-    view === "candidates" ? (slotName ? `Swap the ${slotName.toLowerCase()}` : "Swap one thing")
+    view === "candidates" ? `Swap the ${(slotName ?? "piece").toLowerCase()}`
     : view === "result" ? "Here's the change"
     : view === "cap" ? "You're at today's free limit"
     : view === "feedback" || view === "ack" ? "Tell me what's off"
-    : "Adjust today's outfit";
+    : "What do you want to swap?";
 
-  const subtitle = view === "menu" ? "Keep what you like — change only what you ask." : undefined;
+  const subtitle =
+    view === "slots" ? "The rest of your outfit will stay the same." : undefined;
 
   return (
     <Sheet open={open} onClose={onClose} title={title} subtitle={subtitle}>
-      {view === "menu" && (
+      {/* ---------------- STEP 1: SLOT PICKER (only) ---------------- */}
+      {view === "slots" && (
         <div className="space-y-4">
-          <section>
-            <p className="ww-eyebrow mb-2 text-plum">Swap one thing</p>
-            <div className="flex flex-wrap gap-2">
-              {items.map((it) => (
-                <button
-                  key={it.id}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => { track("swap_slot_selected", { slot: it.slot ?? "item" }); void loadCandidates(it); }}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-bone px-3 py-1.5 text-[13px] font-medium text-charcoal transition-colors hover:border-hairline-strong disabled:opacity-50"
-                >
-                  <Icon.Shuffle className="h-3.5 w-3.5 text-plum" />
-                  {it.slot ?? it.label}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <p className="ww-eyebrow mb-2 text-plum">Change the mood</p>
-            <div className="flex flex-wrap gap-2">
-              {MOODS.map(([value, label]) => (
-                <MoodChip key={value} label={label} disabled={busy} onClick={() => applyMood(value)} />
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-ww-md border border-plum/25 bg-plum/[0.05] p-3">
-            <p className="text-sm font-medium text-charcoal">New mood</p>
-            <p className="mt-0.5 text-xs text-graphite">Restyle the whole look from scratch.</p>
-            <Button size="full" variant="secondary" className="mt-2.5" disabled={busy} onClick={() => runOption()}>
-              <Icon.Sparkle className="h-3.5 w-3.5" /> Show a fresh look
-            </Button>
-          </section>
+          <div className="flex flex-wrap gap-2">
+            {items.map((it) => (
+              <button
+                key={it.id}
+                type="button"
+                disabled={busy}
+                onClick={() => void loadCandidates(it)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-bone px-3.5 py-2 text-[13px] font-medium text-charcoal transition-colors hover:border-hairline-strong disabled:opacity-50"
+              >
+                <Icon.Shuffle className="h-3.5 w-3.5 text-plum" />
+                {it.slot ?? it.label}
+              </button>
+            ))}
+          </div>
 
           {cap && !cap.sessionExempt && (
             <p className="text-center text-[11px] text-mist">
-              {cap.swapRemaining ?? 0} swap{cap.swapRemaining === 1 ? "" : "s"} · {cap.optionRemaining ?? 0} option{cap.optionRemaining === 1 ? "" : "s"} left today
+              {cap.swapRemaining ?? 0} swap{cap.swapRemaining === 1 ? "" : "s"} left today
             </p>
           )}
 
@@ -274,14 +220,20 @@ export function SwapSheet({
             onClick={() => setView("feedback")}
             className="w-full py-1 text-center text-xs text-graphite transition-colors hover:text-charcoal disabled:opacity-50"
           >
-            Not for me
+            Not feeling today&apos;s pick?
           </button>
         </div>
       )}
 
+      {/* ---------------- STEP 2: CANDIDATES FOR THE CHOSEN SLOT ---------------- */}
       {view === "candidates" && (
         <div>
-          <BackRow onClick={() => setView("menu")} />
+          <BackRow onClick={() => setView("slots")} />
+          {lockedContext.length > 0 && (
+            <p className="mt-2 text-xs text-graphite">
+              Keeping {lockedContext.join(", ")} exactly as they are.
+            </p>
+          )}
           {busy ? (
             <p className="mt-3 text-sm text-graphite">Finding the best matches…</p>
           ) : candidates.length > 0 ? (
@@ -291,7 +243,7 @@ export function SwapSheet({
                   key={c.id}
                   type="button"
                   disabled={busy}
-                  onClick={() => applySwap(c.id)}
+                  onClick={() => void applySwap(c.id)}
                   className="overflow-hidden rounded-ww-sm border border-hairline bg-stone/50 text-left transition-transform active:scale-[0.98] disabled:opacity-50"
                 >
                   <div className="aspect-square bg-stone/60">
@@ -315,6 +267,7 @@ export function SwapSheet({
         </div>
       )}
 
+      {/* ---------------- STEP 3: RESULT (one slot changed) ---------------- */}
       {view === "result" && (
         <div>
           {reason && (
@@ -334,13 +287,14 @@ export function SwapSheet({
             </div>
           )}
           <div className="mt-4 grid grid-cols-3 gap-2">
-            <Button size="sm" disabled={busy} onClick={() => { onChanged(); onClose(); }}>Keep it</Button>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={tryAnother}>Try another</Button>
-            <Button size="sm" variant="secondary" disabled={busy || !hasUndo} onClick={putBack}>Put back</Button>
+            <Button type="button" size="sm" disabled={busy} onClick={() => { onChanged(); onClose(); }}>Keep it</Button>
+            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => setView("candidates")}>Try another</Button>
+            <Button type="button" size="sm" variant="secondary" disabled={busy || !hasUndo} onClick={() => void putBack()}>Put back</Button>
           </div>
         </div>
       )}
 
+      {/* ---------------- CAP ---------------- */}
       {view === "cap" && (
         <div className="space-y-3">
           <p className="text-sm leading-relaxed text-charcoal">{capMsg}</p>
@@ -348,30 +302,31 @@ export function SwapSheet({
             <p className="ww-eyebrow mb-2 text-plum">Tell me what&apos;s off</p>
             <div className="flex flex-wrap gap-2">
               {REASONS.map(([value, label]) => (
-                <MoodChip key={value} label={label} disabled={busy} onClick={() => submitFeedback(value)} />
+                <FeedbackChip key={value} label={label} disabled={busy} onClick={() => void submitFeedback(value)} />
               ))}
             </div>
           </div>
           <div className="flex gap-2 pt-1">
-            {hasUndo && <Button size="sm" variant="secondary" disabled={busy} onClick={putBack}>Put back</Button>}
-            <Button size="sm" variant="secondary" disabled={busy} onClick={onClose}>Close</Button>
+            {hasUndo && <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void putBack()}>Put back</Button>}
+            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onClose}>Close</Button>
           </div>
         </div>
       )}
 
+      {/* ---------------- FEEDBACK ---------------- */}
       {view === "feedback" && (
         <div className="space-y-3">
-          <BackRow onClick={() => setView("menu")} />
+          <BackRow onClick={() => setView("slots")} />
           <p className="text-sm text-graphite">A quick tap helps tomorrow&apos;s pick get sharper. Optional.</p>
           <div className="flex flex-wrap gap-2">
             {REASONS.map(([value, label]) => (
-              <MoodChip key={value} label={label} disabled={busy} onClick={() => submitFeedback(value)} />
+              <FeedbackChip key={value} label={label} disabled={busy} onClick={() => void submitFeedback(value)} />
             ))}
           </div>
           <button
             type="button"
             disabled={busy}
-            onClick={() => submitFeedback(null)}
+            onClick={() => void submitFeedback(null)}
             className="w-full py-1 text-center text-xs text-graphite transition-colors hover:text-charcoal disabled:opacity-50"
           >
             Just not for me
@@ -379,10 +334,11 @@ export function SwapSheet({
         </div>
       )}
 
+      {/* ---------------- ACK ---------------- */}
       {view === "ack" && (
         <div className="space-y-4 py-2 text-center">
           <p className="text-sm text-charcoal">{ack}</p>
-          <Button size="full" variant="secondary" onClick={onClose}>Done</Button>
+          <Button type="button" size="full" variant="secondary" onClick={onClose}>Done</Button>
         </div>
       )}
     </Sheet>
@@ -401,7 +357,7 @@ function BackRow({ onClick }: { onClick: () => void }) {
   );
 }
 
-function MoodChip({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+function FeedbackChip({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"

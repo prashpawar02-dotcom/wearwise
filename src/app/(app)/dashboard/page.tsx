@@ -312,22 +312,15 @@ function RealBestPick({ pick }: { pick: BestPick }) {
         {/* Reasoning */}
         {pick.reasoning.length > 0 && <ReasoningCards items={pick.reasoning} className="mt-4" />}
 
-        {/* Actions — Wear this / Swap one item / Another option */}
+        {/* Blocker fix: the legacy "Swap one item" / "Another option" buttons here
+            were <Link>s to /outfits (a full-look list) — they navigated instead of
+            running the real slot-first swap, and both did the same full-outfit
+            thing. Removed so there is ONE correct swap flow: the Daily Drop card's
+            slot-first SwapSheet + its separate Another-option handler. Wear this +
+            "View full look" remain. */}
         <div className="mt-5 space-y-2">
           <div className="flex">
             <WornTodayButton suggestionId={pick.suggestionId} itemIds={pick.itemIds} />
-          </div>
-          <div className="flex gap-2">
-            <Button asChild variant="secondary" className="flex-1">
-              <Link href={`/outfits/${pick.requestId}`}>
-                <Icon.Shuffle className="h-3.5 w-3.5" /> Swap one item
-              </Link>
-            </Button>
-            <Button asChild variant="secondary" className="flex-1">
-              <Link href={pick.hasAlternatives ? `/outfits/${pick.requestId}` : "/occasion/new"}>
-                <Icon.Sparkle className="h-3.5 w-3.5" /> Another option
-              </Link>
-            </Button>
           </div>
         </div>
         <Link

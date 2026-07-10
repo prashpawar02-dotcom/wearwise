@@ -1,5 +1,41 @@
 # WearWise — Changelog
 
+## Phase 3 hotfix 2 — Swap UI: slot-first flow + true button/handler separation (2026-07-10)
+
+Local-only UI fix (no schema/prod changes). Reported: "Swap one thing" did
+nothing / behaved like "Another option"; the slot-first flow wasn't visible.
+
+Root cause (three compounding issues):
+1. The **legacy Best-Pick card** (`RealBestPick`, dashboard/page.tsx) rendered
+   "Swap one item" and "Another option" as `<Link>`s to `/outfits` — both just
+   navigated to a full-look list, so they looked identical and never ran a real
+   swap. Removed (Wear this + "View full look" remain); the Daily Drop card is
+   the single, correct swap surface.
+2. The **swap sheet mixed mood chips + a "New mood" full re-theme** into the
+   same menu as the item chips, so it wasn't a clean slot picker and the
+   full-outfit action sat inside the single-item swap sheet.
+3. **"Another option" reused the swap sheet** (`initialAction="option"`).
+
+Fix:
+- **`SwapSheet.tsx` rebuilt as SLOT-FIRST, single-item ONLY.** First screen asks
+  only "What do you want to swap?" ("The rest of your outfit will stay the
+  same.") and shows just the slots present. No candidates/full look are fetched
+  before a slot is chosen. Choosing a slot fetches replacements for that slot
+  (all other items locked, shown as "Keeping …"); applying changes exactly one
+  item; result row = Keep it / Try another / Put back. Mood chips, "New mood",
+  and `initialAction` removed. Stale outfit → refresh + close honestly.
+- **`daily-drop-card.tsx`:** "Another option" is now a completely separate
+  handler (`anotherOption`) that calls only `/api/daily-drop/another-option`
+  with its own loading state + message, and never opens the sheet or calls the
+  single-slot route. "Swap one thing" opens the sheet only. Both triggers set
+  `type="button"`; distinct `onClick`s; correct labels.
+
+Tests: new `tests/engine/swap-wiring.test.ts` (19 structural regression checks:
+slot-first sheet, no full-outfit/mood route in the sheet, separate handlers,
+type=button, distinct loading state, correct labels). `tsc` clean · ESLint clean
+· engine suite 158 assertions green. `next build` bundling still can't complete
+inside the sandbox (webpack over the mount > shell time cap) — verify locally.
+
 ## Phase 3 hotfix — Stale-outfit render blocker + slot-first swap + explainability (2026-07-10)
 
 Production blocker: the engine correctly excluded an `in_wash` item (engine-QA
