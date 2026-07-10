@@ -108,3 +108,9 @@ assertions (`tests/engine/swap-wiring.test.ts`). This is not a backlog item.
   DOM runner, which this sandbox can't install (npm registry blocked). Add when
   the local/CI test environment supports it, then upgrade the structural guards
   to true DOM click tests.
+
+## Phase 3 hotfix 3 — RESOLVED (2026-07-10, not an idea)
+
+Single-hero Today dashboard is DONE (legacy Best Pick render path removed;
+`ensureTodayDrop` get-or-create replaces the cron-dependent read + legacy
+fallback), locked by 16 dashboard-wiring assertions. Not a backlog item.

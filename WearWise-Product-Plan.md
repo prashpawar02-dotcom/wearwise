@@ -895,3 +895,12 @@ Packing list · calendar integration · one-time wardrobe analysis (if fake-door
 - Uses a separate handler, route, loading state, and cap.
 - Never opens the Swap One Thing sheet.
 - Never uses the single-item swap route.
+
+### Single-Hero Today Dashboard
+- Today's Drop is the sole primary recommendation.
+- Legacy Best Pick cards must never appear on the dashboard.
+- Missing Daily Drop data triggers idempotent creation, not legacy fallback.
+- Cron jobs may precompute recommendations but are not required for dashboard use.
+- Different accounts may correctly receive different recommendation content.
+- Release comparison checks structure and functionality, not identical outfits across accounts.
+- Each dashboard request may perform at most one write-producing recommendation action. A newly created or regenerated outfit must pass final availability validation before rendering. If that validation fails, the request fails closed rather than writing again.
