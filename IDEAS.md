@@ -93,3 +93,18 @@ Log only. Do not build without CEO approval / the owning phase.
 - **Follow-up (Phase 4, low priority):** the legacy `/outfits/[requestId]` multi-
   look list stays as full-alternatives-for-reference; convert to the final
   horizontal hero carousel when Today Screen v2 rebuilds the hero.
+
+## Phase 3 hotfix 2 — RESOLVED (2026-07-10, not an idea)
+
+The slot-first swap sheet, the separate "Another option" handler, and removal of
+the legacy Best-Pick duplicate controls are DONE and locked by 19 wiring
+assertions (`tests/engine/swap-wiring.test.ts`). This is not a backlog item.
+
+### Genuinely deferred polish (test tooling)
+- **React Testing Library + jsdom for click-level UI tests.** The current wiring
+  guards are structural (source assertions). Real click tests — tap "Swap one
+  thing" and assert the sheet opens; assert no candidate fetch before a slot is
+  chosen; assert "Another option" hits only the full-outfit route — need RTL + a
+  DOM runner, which this sandbox can't install (npm registry blocked). Add when
+  the local/CI test environment supports it, then upgrade the structural guards
+  to true DOM click tests.

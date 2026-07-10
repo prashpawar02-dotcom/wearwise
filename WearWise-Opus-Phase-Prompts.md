@@ -204,3 +204,15 @@ Acceptance: handbook §8 launch checklist printed with pass/fail per line. Anyth
 - If Opus proposes deviating from the handbook, require it to state the rule, the reason, and get your yes before proceeding.
 - After each phase, skim the printed Acceptance Checklist and the CHANGELOG entry; spot-check one golden test and one screen on your phone before starting the next phase.
 - Keep `IDEAS.md` — it becomes the backlog review at the end of Phase 8.
+
+---
+
+## Addendum — Local-First Release Process & Corrected Action Separation (2026-07-10)
+
+Paste this reminder into every phase/hotfix prompt going forward.
+
+**Local-First Phase Gate (mandatory order):** implement on a dedicated local branch -> run the app on localhost -> complete manual UI acceptance testing -> run unit tests + typecheck + lint + production build -> fix all defects locally -> commit only after the complete phase acceptance checklist passes -> push and deploy once at phase completion -> run a final production smoke test. No phase or hotfix ships merely because automated tests pass; every user-facing interaction must be manually verified on localhost. See Execution Handbook §9 "Local-First Phase Gate".
+
+**Corrected Phase 3 action separation (do not regress):**
+- "Swap one thing" = slot picker first; no candidates before a slot is chosen; changes exactly one slot; every non-selected item locked; Try another stays within the selected slot; Put back restores exact pre-swap item IDs.
+- "Another option" = separate button, handler, route, loading state, and cap; never opens the swap sheet; never uses the single-item swap route.

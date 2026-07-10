@@ -272,3 +272,41 @@ Entitlements table keyed to subscription state; every gated API validates server
 - [ ] CHANGELOG per phase · [ ] IDEAS.md triaged with CEO
 
 *Companion documents: `WearWise-Product-Plan.md` (rationale & research) · `WearWise-Opus-Phase-Prompts.md` (paste-ready execution prompts).*
+
+---
+
+## 9. Release Process & Phase 3 Swap Contract (Addendum — 2026-07-10)
+
+*Added after the Phase 3 swap-wiring fix. This addendum supersedes nothing above; it tightens release discipline and pins the corrected action separation. Where this addendum and an earlier section disagree on process, this addendum wins.*
+
+### Local-First Phase Gate
+Production is not the testing environment.
+Required order:
+1. Implement on a dedicated local branch.
+2. Run the app on localhost.
+3. Complete manual UI acceptance testing.
+4. Run unit tests, typecheck, lint, and production build.
+5. Fix all defects locally.
+6. Commit only after the complete phase acceptance checklist passes.
+7. Push and deploy once at phase completion.
+8. Run a final production smoke test after deployment.
+
+No phase or hotfix may be pushed merely because automated tests pass. Any user-facing interaction must also be manually verified on localhost.
+
+### Swap One Thing
+- Opens a slot picker first.
+- Does not request candidates before slot selection.
+- Replaces exactly one selected slot.
+- Locks every non-selected item.
+- Try another remains within the selected slot.
+- Put back restores exact pre-swap item IDs.
+
+### Another Option
+- Is a separate full-outfit action.
+- Uses a separate handler, route, loading state, and cap.
+- Never opens the Swap One Thing sheet.
+- Never uses the single-item swap route.
+
+### Phase 3 Acceptance (Local-First addition)
+- Automated structural wiring tests are necessary but do not replace a real localhost click test.
+- Phase 3 cannot close until `npm run build` and the manual mobile-flow checklist pass.

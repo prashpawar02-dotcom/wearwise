@@ -875,3 +875,23 @@ Packing list · calendar integration · one-time wardrobe analysis (if fake-door
 ---
 
 *Sources cited throughout: [Nouva wardrobe-app comparison 2026](https://www.nouva.app/blog/best-wardrobe-apps-2026-comparison) · [Indyx vs Acloset/Whering](https://www.myindyx.com/versus/acloset-vs-whering) · [Short & Sweet Fashion digital closet review](https://shortandsweetfashion.substack.com/p/30-years-since-clueless-digital-closet) · [Acloset Play Store reviews](https://play.google.com/store/apps/details?id=com.looko.acloset&hl=en_US) · [Klodsy AI stylist comparison](https://klodsy.com/blog/best-ai-stylist-apps-2026-comparison/) · [Beauty AI stylist roundup](https://beautyai.app/blog/best-ai-stylist-apps-2026) · [Clothing decision-fatigue statistics](https://bestcolorfulsocks.com/blogs/news/clothing-choice-decision-fatigue-statistics) · [Refinery29 on decision fatigue](https://www.refinery29.com/en-us/nothing-to-wear-fashion-decision-fatigue) · [PsychCentral on outfit repetition](https://psychcentral.com/blog/decision-fatigue-does-it-help-to-wear-the-same-clothes-every-day) · [DRESSED wardrobe paralysis](https://trydressed.com/wardrobe-paralysis/) · [The Carousel, psychology of getting dressed](https://thecarousel.com/beauty-fashion/the-psychology-of-getting-dressed-why-we-keep-wearing-the-same-clothes-even-when-our-wardrobes-are-full/) · [Credence Research India women's apparel](https://www.credenceresearch.com/report/india-women-apparel-market) · [LikeADiva 2026 Indian fashion trends](https://www.likeadiva.com/editorial/latest-trends/latest-fashion-trends-2026-the-hottest-indian-fashion-picks-for-women) · [Loom outfit recommendation (arXiv)](https://arxiv.org/html/2605.09830) · [Springer colour-harmony recommendation models](https://link.springer.com/article/10.1186/s40691-025-00433-y) · [UserIntuition habit loops](https://www.userintuition.ai/reference-guides/habit-loops-and-retention-what-to-study-what-to-ship/) · [Nir Eyal Hooked model](https://medium.com/googleplaydev/optimize-app-retention-with-the-hooked-model-a0781f8e5d29) · [Razorpay Rize Indian subscription psychology](https://rizevault.razorpay.com/p/the-psychology-of-subscriptions-in) · [ScienceDirect freemium willingness-to-pay](https://www.sciencedirect.com/science/article/pii/S0268401224000355) · [BusinessToday UPI price sensitivity](https://www.businesstoday.in/india/story/upi-fee-backlash-3-in-4-users-say-they-will-stop-using-platform-if-transaction-charges-are-imposed-525210-2026-04-11)*
+
+---
+
+## Addendum — Corrected Phase 3 Swap Contract (2026-07-10)
+
+*Records the corrected product contract after the Phase 3 swap-wiring fix. This is the authoritative behaviour for the two dashboard actions; it does not replace the Phase 3 rationale above, it pins the final interaction split.*
+
+### Swap One Thing
+- Opens a slot picker first.
+- Does not request candidates before slot selection.
+- Replaces exactly one selected slot.
+- Locks every non-selected item.
+- Try another remains within the selected slot.
+- Put back restores exact pre-swap item IDs.
+
+### Another Option
+- Is a separate full-outfit action.
+- Uses a separate handler, route, loading state, and cap.
+- Never opens the Swap One Thing sheet.
+- Never uses the single-item swap route.
