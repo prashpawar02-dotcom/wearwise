@@ -216,3 +216,12 @@ Paste this reminder into every phase/hotfix prompt going forward.
 **Corrected Phase 3 action separation (do not regress):**
 - "Swap one thing" = slot picker first; no candidates before a slot is chosen; changes exactly one slot; every non-selected item locked; Try another stays within the selected slot; Put back restores exact pre-swap item IDs.
 - "Another option" = separate button, handler, route, loading state, and cap; never opens the swap sheet; never uses the single-item swap route.
+
+### Single-Hero Today Dashboard
+- Today's Drop is the sole primary recommendation.
+- Legacy Best Pick cards must never appear on the dashboard.
+- Missing Daily Drop data triggers idempotent creation, not legacy fallback.
+- Cron jobs may precompute recommendations but are not required for dashboard use.
+- Different accounts may correctly receive different recommendation content.
+- Release comparison checks structure and functionality, not identical outfits across accounts.
+- Each dashboard request may perform at most one write-producing recommendation action. A newly created or regenerated outfit must pass final availability validation before rendering. If that validation fails, the request fails closed rather than writing again.

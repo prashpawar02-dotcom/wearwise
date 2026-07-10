@@ -7,13 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
-import { ConfidenceRing } from "@/components/ui/ConfidenceRing";
-import { CompactOutfitStack } from "@/components/wearwise/CompactOutfitStack";
-import { ReasoningCards, type ReasoningItem } from "@/components/wearwise/ReasoningCards";
-import type { OutfitItem } from "@/components/wearwise/OutfitItemRow";
-import type { GarmentKind } from "@/components/ui/Icon";
-import { OCCASIONS, type OutfitSuggestion, type WardrobeItem, type DailyRecommendation } from "@/lib/types";
-import { WornTodayButton } from "@/app/(app)/outfits/[requestId]/worn-today-button";
+import { OCCASIONS, type WardrobeItem, type DailyRecommendation } from "@/lib/types";
 import { getWeatherContext, type WeatherContext } from "@/lib/weather";
 import { userLocalDate, prepareDailyDrop } from "@/lib/daily-drop";
 import { capState } from "@/lib/swap-caps";
@@ -28,18 +22,6 @@ export const dynamic = "force-dynamic"; // per-user signed URLs; never cache
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
 
-// Safe demo "Best Pick" shown until the user has an approved outfit.
-// Tuned to the launch niche (smart-casual, women 22–40).
-const DEMO_OUTFIT: OutfitItem[] = [
-  { kind: "Shirt", color: "#F2ECE0", label: "Ivory silk blouse", sub: "Light · breathable" },
-  { kind: "Pants", color: "#B98D63", label: "Camel tailored trousers", sub: "All-day comfort" },
-  { kind: "Loafer", color: "#C9A98C", label: "Nude flats", sub: "Polished · easy" },
-  { kind: "Watch", color: "#3D352B", label: "Gold studs", sub: "Optional" },
-];
-
-type RequestRel = { occasion: string; notes: string | null; created_at: string };
-type ApprovedSuggestion = OutfitSuggestion & { request: RequestRel | RequestRel[] | null };
-
 export default async function DashboardPage() {
   const { user, supabase, profile } = await requireProfile();
   if (!profile?.onboarded) redirect("/onboarding");
@@ -50,7 +32,6 @@ export default async function DashboardPage() {
     { count: itemCount },
     { data: requests },
     { data: worn },
-    { data: approvedData },
     { count: weeklyWorn },
     { data: quietGemRows },
     { data: streakRow },
@@ -58,15 +39,6 @@ export default async function DashboardPage() {
     supabase.from("wardrobe_items").select("id", { count: "exact", head: true }).eq("user_id", user.id),
     supabase.from("outfit_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3),
     supabase.from("worn_history").select("*").eq("user_id", user.id).order("worn_on", { ascending: false }).limit(1),
-    // RLS already restricts to the owner's APPROVED suggestions; we re-state
-    // both filters as defense-in-depth. Pull the parent request for context.
-    supabase
-      .from("outfit_suggestions")
-      .select("*, request:outfit_requests(occasion, notes, created_at)")
-      .eq("user_id", user.id)
-      .eq("status", "approved")
-      .order("created_at", { ascending: false })
-      .limit(12),
     // Real signals for the daily insight card (owner-scoped, no faked data).
     supabase.from("worn_history").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("worn_on", sevenDaysAgo),
     supabase
@@ -84,10 +56,6 @@ export default async function DashboardPage() {
   const firstName = profile?.full_name?.split(" ")[0];
   const initial = (firstName ?? "W").charAt(0).toUpperCase();
 
-  // ---- Build the real Best Pick (if any approved suggestion exists) ----
-  const approved = (approvedData ?? []) as ApprovedSuggestion[];
-  const bestPick = await buildBestPick(approved, user.id, supabase);
-
   const dailyInsight = buildDailyInsight({
     quietGem: (quietGemRows?.[0] as QuietGemRow | undefined) ?? null,
     weeklyWorn: weeklyWorn ?? 0,
@@ -97,14 +65,11 @@ export default async function DashboardPage() {
   // Honest weather context (null when no API key or no city).
   const weather = await getWeatherContext(profile?.city);
 
-  // Today's Drop (Phase 2): read the cached daily recommendation for the user's
-  // local date. Read-only here — preparation runs via the manual prepare route.
-  // Gate on the opt-in: when Daily Drop is OFF we don't surface it at all, even
-  // if a cached row remains from before it was disabled (the row is kept for
-  // history, never deleted or regenerated here).
-  const todayDrop = profile?.daily_drop_enabled
-    ? await loadTodayDrop(user.id, profile?.timezone ?? null, supabase)
-    : null;
+  // Single-Hero contract: the dashboard ALWAYS ensures exactly one Today's Drop
+  // (get-or-create + validate), independent of the cron and of the notification
+  // opt-in. It never falls back to the legacy pick card. One create/regenerate
+  // attempt per request; fail closed to an honest constrained state otherwise.
+  const todayDrop = await ensureTodayDrop(user.id, profile?.timezone ?? null, supabase, items);
 
   return (
     <main className="min-h-dvh pb-28">
@@ -129,76 +94,43 @@ export default async function DashboardPage() {
           </div>
         </div>
         <p className="mt-2 text-sm text-graphite">
-          {bestPick
-            ? "Here's your best outfit for today."
+          {todayDrop.view
+            ? "Here's your outfit for today."
             : items >= 10
-              ? "Create a look and your daily picks will appear here."
+              ? "We're putting today's outfit together from your wardrobe."
               : "Let's set up your wardrobe so your daily picks can begin."}
         </p>
 
         {/* Real weather context (honest fallback when unavailable) */}
         <WeatherStrip weather={weather} />
 
-        {/* Today's Drop — cached daily recommendation (Phase 2). Prepared drop
-            renders as a prominent card; a failed prepare shows honest copy;
-            when there's no drop yet the section is simply absent. */}
-        {todayDrop?.view && (
+        {/* SINGLE PRIMARY RECOMMENDATION — Today's Drop, and only Today's Drop.
+            The legacy pick render path has been removed from the dashboard
+            so two heroes can never compete. When no valid drop can be formed we
+            show one honest constrained state (or the build-wardrobe onboarding) —
+            never the legacy pick card. */}
+        {todayDrop.view ? (
           <DailyDropCard drop={todayDrop.view} postwearEnabled={profile?.postwear_sheet_enabled ?? true} />
-        )}
-        {todayDrop?.failed && (
-          <Card className="mt-5 border-champagne/30 bg-champagne/[0.08] p-4">
-            <p className="font-medium text-charcoal">Today&apos;s pick isn&apos;t ready</p>
-            <p className="mt-1 text-sm text-graphite">{todayDrop.failed}</p>
-            {/* Safe retry — normal prepare, never force */}
-            <PrepareDropButton compact />
-          </Card>
-        )}
-        {/* Manual beta prepare — only when opted in and no drop exists today */}
-        {profile?.daily_drop_enabled && !todayDrop && <PrepareDropButton />}
-
-        {/* Context chips */}
-        <div className="no-scrollbar -mx-6 mt-4 flex gap-2 overflow-x-auto px-6">
-          {bestPick ? (
-            <>
-              <Chip tone="filled">{bestPick.occasion}</Chip>
-              {bestPick.context && <Chip>{bestPick.context}</Chip>}
-              {bestPick.confidence != null && (
-                <Chip tone="plum" mono size="sm">{bestPick.confidence}% match</Chip>
-              )}
-              <Link href="/occasion/new" className="shrink-0">
-                <Chip className="text-graphite">+ new</Chip>
-              </Link>
-            </>
-          ) : (
-            <>
-              <Chip><Icon.Briefcase className="h-3.5 w-3.5" /> Everyday</Chip>
-              <Chip tone="filled">Smart casual</Chip>
-              <Link href="/occasion/new" className="shrink-0">
-                <Chip className="text-graphite">+ change</Chip>
-              </Link>
-            </>
-          )}
-        </div>
-
-        {/* Build-wardrobe nudge (until they have enough items, no real pick) */}
-        {!bestPick && items < 10 && (
+        ) : todayDrop.needsWardrobe ? (
           <Card className="mt-5 border-plum/20 bg-plum/[0.05] p-5">
             <p className="font-medium text-charcoal">Build your wardrobe first</p>
             <p className="mt-1 text-sm text-graphite">
-              Add at least 10 items so WearWise can suggest great outfits. You have {items} so far.
+              Add at least 10 items so WearWise can prepare your daily outfit. You have {items} so far.
             </p>
             <Button asChild className="mt-4" size="full">
-              <Link href="/wardrobe/upload"><Icon.Plus className="h-4 w-4" /> Add clothes to get your first real outfit</Link>
+              <Link href="/wardrobe/upload"><Icon.Plus className="h-4 w-4" /> Add clothes to get your first outfit</Link>
             </Button>
           </Card>
+        ) : (
+          <Card className="mt-5 border-champagne/30 bg-champagne/[0.08] p-4">
+            <p className="font-medium text-charcoal">We couldn&apos;t prepare today&apos;s outfit</p>
+            <p className="mt-1 text-sm text-graphite">
+              {todayDrop.failed ?? "We couldn't prepare today's outfit from your available wardrobe."}
+            </p>
+            {/* Retry — regenerates from current available inventory (no legacy fallback). */}
+            <PrepareDropButton compact />
+          </Card>
         )}
-
-        {bestPick && <p className="ww-eyebrow mt-6 text-plum">Today&apos;s Pick is ready</p>}
-
-        {/* Best Pick card */}
-        <section className={bestPick ? "mt-2" : "mt-5"}>
-          {bestPick ? <RealBestPick pick={bestPick} /> : <SampleBestPick items={items} />}
-        </section>
 
         {/* Daily insight / surprise — safe, real signals only */}
         <DailyInsight text={dailyInsight} />
@@ -252,263 +184,6 @@ export default async function DashboardPage() {
       <BottomNav />
     </main>
   );
-}
-
-// ===================== Best Pick rendering =====================
-
-interface BestPick {
-  suggestionId: string;
-  requestId: string;
-  title: string;
-  occasion: string;
-  context: string | null;
-  confidence: number | null;
-  itemIds: string[];
-  rows: OutfitItem[];
-  thumbs: string[];
-  reasoning: ReasoningItem[];
-  hasAlternatives: boolean;
-}
-
-function RealBestPick({ pick }: { pick: BestPick }) {
-  return (
-    <>
-      <Card variant="stack" className="overflow-hidden p-5">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="ww-eyebrow text-plum">Best Pick Today</p>
-            <h2 className="mt-1 font-serif text-[1.35rem] leading-tight tracking-tight text-charcoal">
-              {pick.title}
-            </h2>
-          </div>
-          {pick.confidence != null && <ConfidenceRing value={pick.confidence} size={52} />}
-        </div>
-
-        {/* Outfit photos (private signed thumbnails) or graceful gradient */}
-        <div className="relative mb-4 h-44 overflow-hidden rounded-ww-md border border-hairline bg-gradient-to-b from-bone to-stone">
-          {pick.confidence != null && (
-            <span className="absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-full bg-charcoal/70 px-2.5 py-1 text-[10px] font-medium tracking-wide text-bone backdrop-blur">
-              <Icon.Sparkle className="h-2.5 w-2.5" /> AI · STYLE MATCH {pick.confidence}
-            </span>
-          )}
-          {pick.thumbs.length > 0 ? (
-            <div className="flex h-full gap-1">
-              {pick.thumbs.slice(0, 4).map((src, i) => (
-                <div key={i} className="h-full flex-1 overflow-hidden bg-stone">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src} alt="" className="h-full w-full object-cover" />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="grid h-full place-items-center text-mist">
-              <Icon.Hanger className="h-7 w-7" />
-            </div>
-          )}
-        </div>
-
-        <CompactOutfitStack items={pick.rows} showCheck={false} />
-
-        {/* Reasoning */}
-        {pick.reasoning.length > 0 && <ReasoningCards items={pick.reasoning} className="mt-4" />}
-
-        {/* Blocker fix: the legacy "Swap one item" / "Another option" buttons here
-            were <Link>s to /outfits (a full-look list) — they navigated instead of
-            running the real slot-first swap, and both did the same full-outfit
-            thing. Removed so there is ONE correct swap flow: the Daily Drop card's
-            slot-first SwapSheet + its separate Another-option handler. Wear this +
-            "View full look" remain. */}
-        <div className="mt-5 space-y-2">
-          <div className="flex">
-            <WornTodayButton suggestionId={pick.suggestionId} itemIds={pick.itemIds} />
-          </div>
-        </div>
-        <Link
-          href={`/outfits/${pick.requestId}`}
-          className="mt-2.5 flex w-full items-center justify-center gap-1.5 py-1.5 text-[13px] text-graphite hover:text-charcoal"
-        >
-          <Icon.ArrowRight className="h-3.5 w-3.5" /> View full look &amp; alternatives
-        </Link>
-      </Card>
-      <Link href="/occasion/new" className="mt-2 flex items-center justify-center gap-1.5 py-1 text-xs text-graphite hover:text-charcoal">
-        <Icon.Calendar className="h-3.5 w-3.5" /> Change occasion
-      </Link>
-    </>
-  );
-}
-
-function SampleBestPick({ items }: { items: number }) {
-  const ready = items >= 10;
-  return (
-    <>
-      <Card variant="stack" className="overflow-hidden p-5">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="ww-eyebrow text-plum">Sample preview</p>
-            <h2 className="mt-1 font-serif text-[1.35rem] leading-tight tracking-tight text-charcoal">
-              Polished without trying <em className="text-plum">too hard.</em>
-            </h2>
-          </div>
-          <ConfidenceRing value={87} size={52} />
-        </div>
-
-        <div className="relative mb-4 flex h-44 items-center justify-center overflow-hidden rounded-ww-md border border-hairline bg-gradient-to-b from-bone to-stone">
-          <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-charcoal/70 px-2.5 py-1 text-[10px] font-medium tracking-wide text-bone backdrop-blur">
-            <Icon.Sparkle className="h-2.5 w-2.5" /> SAMPLE · STYLE MATCH 87
-          </span>
-          <div className="flex items-end gap-3 opacity-90">
-            {DEMO_OUTFIT.slice(0, 3).map((it, i) => (
-              <div
-                key={i}
-                className="grid h-20 w-16 place-items-center rounded-ww-sm border border-hairline"
-                style={{ background: it.color }}
-              >
-                <span className="sr-only">{it.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <CompactOutfitStack items={DEMO_OUTFIT} showCheck={false} />
-
-        <div className="mt-4 flex flex-wrap gap-1.5">
-          <Chip tone="sage" size="sm"><Icon.Check className="h-2.5 w-2.5" /> Weather-ready</Chip>
-          <Chip tone="sage" size="sm"><Icon.Check className="h-2.5 w-2.5" /> Office-ready</Chip>
-          <Chip tone="sage" size="sm"><Icon.Check className="h-2.5 w-2.5" /> Comfortable</Chip>
-        </div>
-
-        <div className="mt-5">
-          <Button asChild size="full">
-            <Link href={ready ? "/occasion/new" : "/wardrobe/upload"}>
-              {ready ? (
-                <>Get today&apos;s outfit <Icon.ArrowRight className="h-4 w-4" /></>
-              ) : (
-                <>Add clothes to get your first real outfit</>
-              )}
-            </Link>
-          </Button>
-        </div>
-      </Card>
-      <p className="mt-2 px-1 text-xs text-mist">
-        {ready
-          ? "This is a sample. Create a look to see your real Best Pick here."
-          : `This is a sample of your daily pick. Add ${Math.max(0, 10 - items)} more item${10 - items === 1 ? "" : "s"} to get real recommendations.`}
-      </p>
-    </>
-  );
-}
-
-// ===================== Data shaping =====================
-
-async function buildBestPick(
-  approved: ApprovedSuggestion[],
-  userId: string,
-  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"]
-): Promise<BestPick | null> {
-  // Hotfix: never surface a stored suggestion that contains an item which is no
-  // longer wearable (in_wash / unavailable / archived / deleted). Pick the first
-  // approved suggestion whose every item is currently available; if none, render
-  // no legacy Best Pick at all (the Daily Drop card is the canonical surface).
-  let top: ApprovedSuggestion | null = null;
-  for (const s of approved) {
-    const v = await validateOutfitCurrent(supabase, userId, s.item_ids ?? []);
-    if (v.valid) { top = s; break; }
-    await logAppEvent("stale_outfit_blocked", userId, {
-      surface: "best_pick", reason: v.invalid[0]?.reason ?? "stale",
-    });
-  }
-  if (!top) return null;
-
-  const rel = Array.isArray(top.request) ? top.request[0] : top.request;
-  const itemIds = top.item_ids ?? [];
-
-  // Load member items (owner-scoped; RLS also enforces ownership).
-  let members: WardrobeItem[] = [];
-  if (itemIds.length) {
-    const { data } = await supabase
-      .from("wardrobe_items")
-      .select("*")
-      .eq("user_id", userId)
-      .in("id", itemIds);
-    members = (data ?? []) as WardrobeItem[];
-  }
-  const byId = new Map(members.map((m) => [m.id, m]));
-  const urls = await signWardrobePaths(members.map((m) => m.image_path));
-
-  // Preserve the stylist's item order.
-  const rows: OutfitItem[] = itemIds
-    .map((id) => byId.get(id))
-    .filter((m): m is WardrobeItem => Boolean(m))
-    .map((m) => ({
-      kind: toGarment(m.category, m.sub_category),
-      color: colorToHex(m.color),
-      image: urls[m.image_path] ?? null,
-      label: m.user_facing_name ?? m.category ?? "Item",
-      sub: [m.category, m.color].filter(Boolean).join(" · ") || undefined,
-      note: m.last_worn_at ? `Worn ${new Date(m.last_worn_at).toLocaleDateString()}` : undefined,
-    }));
-
-  const thumbs = itemIds
-    .map((id) => byId.get(id))
-    .filter((m): m is WardrobeItem => Boolean(m))
-    .map((m) => urls[m.image_path])
-    .filter((u): u is string => Boolean(u));
-
-  // Hotfix: Phase-3 surfaces render explanations ONLY from real stored scoring
-  // factors (handbook §3.5). Legacy free-generated copy — "Why this works"
-  // paragraphs, avoid tips, and "Would complete it: <unowned belt>" — is removed
-  // here; the Daily Drop card carries the canonical WhyThisWorks.
-  const reasoning: ReasoningItem[] = [];
-
-  const hasAlternatives = approved.some((s) => s.request_id === top.request_id && s.id !== top.id);
-
-  return {
-    suggestionId: top.id,
-    requestId: top.request_id,
-    title: top.title || "Today's outfit",
-    occasion: rel ? occasionLabel(rel.occasion) : "Your day",
-    context: rel?.notes ?? null,
-    confidence: top.ai_confidence != null ? Math.round(top.ai_confidence * 100) : null,
-    itemIds,
-    rows,
-    thumbs,
-    reasoning,
-    hasAlternatives,
-  };
-}
-
-/** Map a wardrobe category/sub-category to the closest garment illustration. */
-function toGarment(category?: string | null, sub?: string | null): GarmentKind {
-  const c = `${sub ?? ""} ${category ?? ""}`.toLowerCase();
-  if (/\b(jean|denim)\b/.test(c)) return "Jeans";
-  if (/(trouser|chino|pant|legging|palazzo|bottom|jogger)/.test(c)) return "Pants";
-  if (/skirt/.test(c)) return "Skirt";
-  if (/(saree|sari|gown|dress|anarkali|lehenga)/.test(c)) return "Dress";
-  if (/(sneaker|trainer)/.test(c)) return "Sneaker";
-  if (/(footwear|shoe|heel|flat|sandal|loafer|mule|boot)/.test(c)) return "Loafer";
-  if (/(outerwear|jacket|blazer|coat|overshirt)/.test(c)) return "Jacket";
-  if (/(sweater|knit|cardigan|pullover)/.test(c)) return "Sweater";
-  if (/(belt)/.test(c)) return "Belt";
-  if (/(watch|accessory|jewel|bag|clutch|earring|stud)/.test(c)) return "Watch";
-  if (/(tee|t-shirt|tshirt)/.test(c)) return "Tshirt";
-  return "Shirt"; // tops, kurta, kurti, blouse, shirt, dupatta → default
-}
-
-/** Map a colour name to a swatch hex for vector tiles (used only without a photo). */
-function colorToHex(color?: string | null): string {
-  const map: Record<string, string> = {
-    white: "#F4F0E8", ivory: "#F2ECE0", cream: "#F2ECE0", beige: "#E3D8C6",
-    black: "#1C1A17", grey: "#8A857C", gray: "#8A857C", charcoal: "#2B2925",
-    navy: "#2A3852", blue: "#3A4E7A", "sky blue": "#9DB6D6",
-    red: "#9E3B36", maroon: "#5A2330", pink: "#C98BA0", rose: "#C98BA0",
-    green: "#5E7351", olive: "#6B6A3A", sage: "#8AA17C",
-    yellow: "#D8B24A", gold: "#B8915A", mustard: "#C79A3E",
-    brown: "#7B4B2E", tan: "#B98D63", camel: "#B98D63",
-    purple: "#5C4A6E", plum: "#4A2C3D", lavender: "#C4BBD4",
-    orange: "#C77A5A", terracotta: "#C77A5A",
-  };
-  const key = (color ?? "").trim().toLowerCase();
-  return map[key] ?? "#EAE3D7";
 }
 
 // ===================== Daily insight (safe, real signals only) =====================
@@ -581,7 +256,21 @@ function dateLabel() {
   return new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 }
 
-// ===================== Today's Drop (Phase 2 read) =====================
+// ===================== Today's Drop (single-hero get-or-create) =====================
+
+/** Map a generation failure to the dashboard's ONE honest constrained state.
+ *  Thin/empty wardrobe -> onboarding (needsWardrobe); anything else -> retryable. */
+function constrainedResult(
+  reason: string | undefined,
+  itemCount: number,
+  message?: string,
+): { failed: string; needsWardrobe?: boolean } {
+  const thin = reason === "no_wardrobe" || reason === "too_few_wearable_items" || itemCount < 10;
+  if (thin) {
+    return { failed: "Add a few clothes and your daily outfit will appear here.", needsWardrobe: true };
+  }
+  return { failed: message || "We couldn't prepare today's outfit from your available wardrobe." };
+}
 
 /**
  * Read today's cached daily_recommendation for the user's local date and shape
@@ -589,11 +278,12 @@ function dateLabel() {
  * stored). Returns { view } for a usable drop, { failed } for an honest
  * failure message, or null when there is no drop for today.
  */
-async function loadTodayDrop(
+async function ensureTodayDrop(
   userId: string,
   timezone: string | null,
-  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"]
-): Promise<{ view?: DailyDropView; failed?: string } | null> {
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  itemCount: number,
+): Promise<{ view?: DailyDropView; failed?: string; needsWardrobe?: boolean }> {
   const localDate = userLocalDate(timezone);
   const { data } = await supabase
     .from("daily_recommendations")
@@ -601,42 +291,63 @@ async function loadTodayDrop(
     .eq("user_id", userId)
     .eq("local_date", localDate)
     .maybeSingle();
-  if (!data) return null;
 
-  let rec = data as DailyRecommendation;
-  if (rec.status === "failed") {
-    return {
-      failed:
-        rec.reasoning ||
-        "We couldn't prepare today's outfit. Add a few clothes or mark items available to improve tomorrow's pick.",
-    };
+  // ---------------------------------------------------------------------------
+  // SINGLE-WRITE CONTRACT (Phase 3 hotfix 4): a dashboard request performs AT
+  // MOST ONE write-producing recommendation action — either ONE create (missing
+  // row) OR ONE regenerate (pre-existing stale row), never both. `writeAttempted`
+  // makes this explicit and guards against future refactors. A newly created or
+  // regenerated outfit is STILL validated below (validation is never skipped); if
+  // it lost the create/validate race and is stale, the request FAILS CLOSED
+  // rather than writing a second time.
+  // ---------------------------------------------------------------------------
+  let rec = (data as DailyRecommendation | null) ?? null;
+  let source: "existing" | "created" | "regenerated" = rec ? "existing" : "created";
+  let writeAttempted = false;
+
+  if (!rec) {
+    // MISSING ROW -> exactly one create (ignoreOptIn bypasses ONLY the
+    // notification opt-in; it never enables or sends notifications). Idempotent:
+    // prepareDailyDrop upserts on (user_id, local_date), so concurrent first
+    // loads resolve to a single row.
+    writeAttempted = true;
+    const created = await prepareDailyDrop(userId, { supabase, ignoreOptIn: true });
+    if (!created.recommendation) return constrainedResult(created.reason, itemCount);
+    rec = created.recommendation;
+  } else if (rec.status !== "failed") {
+    // EXISTING ROW -> regenerate ONCE, and ONLY if the stored outfit is already
+    // stale. Regeneration is reachable only on this pre-existing branch, so a
+    // create and a regenerate can never both run in the same request.
+    const existingIds = rec.selected_item_ids ?? [];
+    const existingValidity = await validateOutfitCurrent(supabase, userId, existingIds);
+    if (existingIds.length > 0 && !existingValidity.valid && !writeAttempted) {
+      writeAttempted = true;
+      await logAppEvent("stale_outfit_blocked", userId, {
+        surface: "daily_drop", reason: existingValidity.invalid[0]?.reason ?? "stale",
+      });
+      const regenerated = await prepareDailyDrop(userId, { force: true, supabase });
+      if (regenerated.recommendation) { rec = regenerated.recommendation; source = "regenerated"; }
+      await logAppEvent("stale_outfit_regenerated", userId, { status: regenerated.status });
+    }
   }
 
-  // Hotfix — read-time validity gate. A stored drop can go stale if a piece was
-  // marked in_wash / unavailable / archived (or deleted) AFTER it was prepared.
-  // Never render a stale outfit: regenerate around what's clean right now, then
-  // re-validate. If nothing valid can be formed, fall through to an honest
-  // constrained state — but never show the dirty item.
-  let ids = rec.selected_item_ids ?? [];
-  let validity = await validateOutfitCurrent(supabase, userId, ids);
-  if (ids.length > 0 && !validity.valid) {
-    await logAppEvent("stale_outfit_blocked", userId, {
-      surface: "daily_drop", reason: validity.invalid[0]?.reason ?? "stale",
-    });
-    const regen = await prepareDailyDrop(userId, { force: true, supabase });
-    if (regen.recommendation) {
-      rec = regen.recommendation;
-      ids = rec.selected_item_ids ?? [];
-      validity = await validateOutfitCurrent(supabase, userId, ids);
-      await logAppEvent("stale_outfit_regenerated", userId, { status: regen.status });
+  if (rec.status === "failed") {
+    return constrainedResult(rec.fail_reason ?? undefined, itemCount, rec.reasoning ?? undefined);
+  }
+
+  // FINAL availability validation — ALWAYS runs on the selected IDs for existing,
+  // created, AND regenerated results (never skipped for a freshly created row).
+  // A created/regenerated outfit that became stale during the create/validate
+  // race FAILS CLOSED here; it is NOT regenerated again (writeAttempted spent).
+  const ids = rec.selected_item_ids ?? [];
+  const validity = await validateOutfitCurrent(supabase, userId, ids);
+  if (ids.length === 0 || !validity.valid) {
+    if (source !== "existing") {
+      await logAppEvent("stale_outfit_blocked", userId, {
+        surface: `daily_drop_${source}`, reason: validity.invalid[0]?.reason ?? "stale",
+      });
     }
-    if (rec.status === "failed" || !validity.valid) {
-      return {
-        failed:
-          rec.reasoning ||
-          "Today's pick is refreshing around what's clean right now — check back in a moment.",
-      };
-    }
+    return constrainedResult(rec.fail_reason ?? undefined, itemCount, rec.reasoning ?? undefined);
   }
 
   const members: WardrobeItem[] = validity.items;

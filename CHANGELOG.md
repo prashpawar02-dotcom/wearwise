@@ -1,5 +1,75 @@
 # WearWise — Changelog
 
+## Phase 3 hotfix 4 — Dashboard single-write recommendation contract (2026-07-10)
+
+Local-only correctness fix (no schema/prod changes). Follow-up to the single-hero
+dashboard audit: `ensureTodayDrop` could, in a TOCTOU availability race, perform
+BOTH a create (missing row) AND a regeneration (stale check) in the same request.
+
+Fix — `src/app/(app)/dashboard/page.tsx` `ensureTodayDrop`:
+- A request now performs **at most one write-producing action**: exactly one
+  create (missing row, `if (!rec)`) XOR one regenerate (pre-existing stale row,
+  `else if`). The two are mutually exclusive branches, and an explicit
+  `writeAttempted` flag + a `source: "existing" | "created" | "regenerated"`
+  path variable make the contract explicit and guard against future refactors.
+- Regeneration is reachable ONLY on the pre-existing-row branch — never after a
+  create — so a create and a regenerate can never both run in one request.
+- A **final `validateOutfitCurrent` always runs** on the selected IDs for
+  existing, created, AND regenerated results (validation is never skipped for a
+  freshly created row). If a created/regenerated outfit lost the create/validate
+  race and is stale, the request **fails closed** to the honest constrained/retry
+  state — it does NOT regenerate a second time.
+- Preserved: `ignoreOptIn` bypasses only creation eligibility (no notifications);
+  atomic upsert on `(user_id, local_date)` (backed by the live
+  `daily_recommendations_user_date_unique` constraint); no legacy Best Pick
+  fallback; exactly one Today's Drop hero; no stale/in-wash item can render.
+
+Tests: `tests/engine/dashboard-wiring.test.ts` extended to 24 assertions (8 new
+single-write guards: exactly one create + one regenerate, mutual exclusion,
+`writeAttempted`, final-validation-always, created-stale-fails-closed). `tsc`
+clean · ESLint clean · engine suite 182 assertions green. `next build` bundling
+still can't complete inside the sandbox (webpack over the mount > shell time cap)
+— verify locally.
+
+## Phase 3 hotfix 3 — Single-hero Today dashboard (2026-07-10)
+
+Local-only render-contract fix (no schema/prod changes). Root cause of two
+divergent broken states:
+- **Localhost showed two competing heroes:** the dashboard rendered the legacy
+  Best Pick section UNCONDITIONALLY (`{bestPick ? <RealBestPick/> : <SampleBestPick/>}`)
+  in addition to the new Today's Drop card, so a duplicate legacy card rendered
+  underneath Today's Drop.
+- **Production could fall back to legacy-only:** `loadTodayDrop()` only READ
+  today's `daily_recommendations` row and returned `null` when none existed (it
+  depended on the cron/manual prepare) and was gated on the notification opt-in;
+  with no row, `DailyDropCard` was absent while the unconditional Best Pick still
+  rendered — legacy-only.
+
+Fix:
+- The **dashboard now uses one authoritative Today's Drop path**: `ensureTodayDrop()`
+  (get-or-create + validate). If today's row is absent it creates ONE from the
+  current available wardrobe (idempotent upsert on `(user_id, local_date)`; one
+  attempt per request; bypasses the notification opt-in via `prepareDailyDrop`'s
+  new `ignoreOptIn`). Stale drops regenerate once from valid inventory. When no
+  valid drop can be formed it shows one honest constrained state (or build-wardrobe
+  onboarding) with a Retry — never the legacy Best Pick.
+- The **legacy Best Pick dashboard fallback is removed**: `RealBestPick`,
+  `SampleBestPick`, `buildBestPick`, the approved-`outfit_suggestions` query,
+  "Best Pick Today", and "View full look & alternatives" are all gone from the
+  dashboard render path. Exactly one `<DailyDropCard>` renders.
+- The authenticated dashboard stays `export const dynamic = "force-dynamic"`
+  (not globally cached), so laundry/swap/option/new-drop changes reflect on load.
+- Different accounts may correctly receive different outfits/wardrobes/streaks/
+  weather/titles — release comparison is structural, not content-identical.
+
+Tests: new `tests/engine/dashboard-wiring.test.ts` (16 structural guards: single
+`DailyDropCard`, no RealBestPick/SampleBestPick/buildBestPick, no "Best Pick
+Today"/"View full look", ensureTodayDrop get-or-create with `ignoreOptIn`, stale
+regenerate-once, honest constrained state, `force-dynamic`, no legacy suggestions
+query). `tsc` clean · ESLint clean · engine suite 174 assertions green (incl. 16
+dashboard + 19 swap-wiring). `next build` bundling still can't complete inside the
+sandbox (webpack over the mount > shell time cap) — verify locally.
+
 ## Phase 3 hotfix 2 — Swap UI: slot-first flow + true button/handler separation (2026-07-10)
 
 Local-only UI fix (no schema/prod changes). Reported: "Swap one thing" did

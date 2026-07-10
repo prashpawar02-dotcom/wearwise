@@ -310,3 +310,12 @@ No phase or hotfix may be pushed merely because automated tests pass. Any user-f
 ### Phase 3 Acceptance (Local-First addition)
 - Automated structural wiring tests are necessary but do not replace a real localhost click test.
 - Phase 3 cannot close until `npm run build` and the manual mobile-flow checklist pass.
+
+### Single-Hero Today Dashboard
+- Today's Drop is the sole primary recommendation.
+- Legacy Best Pick cards must never appear on the dashboard.
+- Missing Daily Drop data triggers idempotent creation, not legacy fallback.
+- Cron jobs may precompute recommendations but are not required for dashboard use.
+- Different accounts may correctly receive different recommendation content.
+- Release comparison checks structure and functionality, not identical outfits across accounts.
+- Each dashboard request may perform at most one write-producing recommendation action. A newly created or regenerated outfit must pass final availability validation before rendering. If that validation fails, the request fails closed rather than writing again.

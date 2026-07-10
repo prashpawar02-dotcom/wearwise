@@ -366,6 +366,10 @@ export async function prepareDailyDrop(
     supabase?: DbClient;
     /** Provenance, for logging/analytics later. Does not change behavior. */
     source?: "manual" | "cron";
+    /** Dashboard get-or-create: bypass the per-user notification opt-in so the
+     *  Today's Drop hero always exists on the dashboard (push/cron still respect
+     *  the opt-in). */
+    ignoreOptIn?: boolean;
   } = {}
 ): Promise<PrepareResult> {
   // Default to the session-scoped server client (manual/authenticated path).
@@ -388,8 +392,9 @@ export async function prepareDailyDrop(
     return { status: "failed", localDate, reason: "no_profile", warning: tzWarning, recommendation: null };
   }
 
-  // ---- Opt-in gate: never prepare for a disabled user (wins over any cache) ----
-  if (!profile.daily_drop_enabled) {
+  // ---- Opt-in gate: never prepare for a disabled user (wins over any cache),
+  //      UNLESS the caller explicitly bypasses it (dashboard get-or-create). ----
+  if (!profile.daily_drop_enabled && !options.ignoreOptIn) {
     return { status: "disabled", localDate, reason: "daily_drop_disabled", warning: tzWarning, recommendation: null };
   }
 
