@@ -91,9 +91,12 @@ export function DailyDropCard({
   const [postWearOpen, setPostWearOpen] = useState(false);
   const [postWearSaving, setPostWearSaving] = useState(false);
 
-  // Swap sheet (Phase 3)
+  // Swap sheet (Phase 3) — SLOT-FIRST single-item swap only.
   const [swapOpen, setSwapOpen] = useState(false);
-  const [swapInitial, setSwapInitial] = useState<"option" | null>(null);
+  // "Another option" is a SEPARATE full-outfit action with its own loading state
+  // and message — it never opens the swap sheet or calls the single-slot route.
+  const [optionBusy, setOptionBusy] = useState(false);
+  const [optionMsg, setOptionMsg] = useState<string | null>(null);
 
   // ---- Trust signals (derived from the selected items' wear history) ----
   const withHistory = drop.items.filter((i) => i.lastWornAt);
@@ -199,15 +202,36 @@ export function DailyDropCard({
     router.refresh();
   }
 
+  // "Swap one thing" — opens the slot-first swap sheet. Nothing else.
   function openSwap() {
-    setSwapInitial(null);
     setSwapOpen(true);
     track("daily_drop_swap_started", { selected_item_count: drop.items.length });
   }
-  function openAnother() {
-    setSwapInitial("option");
-    setSwapOpen(true);
+
+  // "Another option" — a completely separate handler. Calls ONLY the full
+  // alternative route, with its own loading state + cap message. Never opens the
+  // swap sheet and never calls the single-slot swap route.
+  async function anotherOption() {
+    setOptionBusy(true);
+    setOptionMsg(null);
     track("daily_drop_another_option_clicked", { selected_item_count: drop.items.length });
+    try {
+      const res = await fetch("/api/daily-drop/another-option", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recommendationId: drop.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.status === "updated" || data.status === "stale") { router.refresh(); return; }
+      if (data.status === "cap_reached") { setOptionMsg(data.message ?? "You're at today's option limit for now."); return; }
+      if (data.status === "not_enough_items") { setOptionMsg("Add a few more available clothes to create another strong option."); return; }
+      if (data.status === "disabled") { setOptionMsg(data.message ?? "Options are taking a short break — back soon."); return; }
+      setOptionMsg("We couldn't create another option right now. Please try again.");
+    } catch {
+      setOptionMsg("We couldn't create another option right now. Please try again.");
+    } finally {
+      setOptionBusy(false);
+    }
   }
 
   const thumbs = drop.items.map((i) => i.image).filter((u): u is string => Boolean(u));
@@ -280,15 +304,16 @@ export function DailyDropCard({
         {worn ? (<><Icon.Check className="h-4 w-4" /> Worn today</>) : saving ? "Saving…" : "Wear this"}
       </Button>
 
-      {/* Secondary actions */}
+      {/* Secondary actions — two SEPARATE buttons, two SEPARATE handlers. */}
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <Button variant="secondary" size="sm" onClick={openSwap} disabled={busy || worn}>
+        <Button type="button" variant="secondary" size="sm" onClick={openSwap} disabled={busy || worn || optionBusy}>
           <Icon.Shuffle className="h-3.5 w-3.5" /> Swap one thing
         </Button>
-        <Button variant="secondary" size="sm" onClick={openAnother} disabled={busy || worn}>
-          <Icon.Sparkle className="h-3.5 w-3.5" /> Show another
+        <Button type="button" variant="secondary" size="sm" onClick={anotherOption} disabled={busy || worn || optionBusy}>
+          <Icon.Sparkle className="h-3.5 w-3.5" /> {optionBusy ? "Finding another…" : "Another option"}
         </Button>
       </div>
+      {optionMsg && <p className="mt-2 text-center text-xs text-graphite">{optionMsg}</p>}
 
       {/* Investment vault (Module C): save today's look to the Lookbook */}
       <div className="mt-2 flex justify-center">
@@ -302,7 +327,6 @@ export function DailyDropCard({
       recommendationId={drop.id}
       items={drop.items.map((it) => ({ id: it.id, label: it.label, image: it.image, category: it.category ?? null, slot: it.slot ?? null }))}
       cap={drop.cap}
-      initialAction={swapInitial}
       onChanged={() => router.refresh()}
     />
 

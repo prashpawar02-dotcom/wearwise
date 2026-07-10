@@ -30,6 +30,7 @@
     "tests/engine/golden.test.ts",
     "tests/engine/laundry.test.ts",
     "tests/engine/swap.test.ts",
-    "tests/engine/validity.test.ts"
+    "tests/engine/validity.test.ts",
+    "tests/engine/swap-wiring.test.ts"
   ]
 }
