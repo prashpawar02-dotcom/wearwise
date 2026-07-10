@@ -181,6 +181,12 @@ export interface DailyRecommendation {
   factor_breakdown?: Record<string, unknown> | null;
   is_dual_pick?: boolean;
   engine_version?: string | null;
+  // Phase 3 (migration 0022): swap · another option · undo · caps.
+  swap_candidates?: Record<string, string[]>;
+  base_item_ids?: string[];
+  pre_swap_item_ids?: string[] | null;
+  swaps_used?: number;
+  options_used?: number;
 }
 
 // ---- Subscriptions (migration 0012) ----

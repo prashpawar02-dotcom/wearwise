@@ -61,3 +61,23 @@ Log only. Do not build without CEO approval / the owning phase.
   PostHog events; if the server-side `app_events` mirror (`src/lib/events.ts`)
   should also capture laundry transitions for cohorting, wire it in the
   `/api/wardrobe/laundry` route during the Phase 7 learning-loop work.
+
+## Phase 3 — deferred polish (logged, not built, to honour scope)
+
+- **Hero swipe carousel for Another Option (Phase 4 polish).** §5 P3 asks for
+  full-outfit alternates as a horizontal swipe on the hero. Phase 3 ships
+  functional in-place alternation (New mood advances; Put back = previous),
+  which is behaviourally equivalent. A dedicated swipe carousel on the Today
+  hero belongs with Today Screen v2 (Phase 4), where the hero is rebuilt.
+- **Per-user prefs in swap context (Phase 4).** Swap/mood validation uses the
+  same context as the heuristic base outfit (`defaultContext` + weather,
+  `EMPTY_PREFERENCES`) so a precomputed candidate stays valid on apply. When
+  Phase 4 rewires selection onto `recommendOutfits()`, swap context should adopt
+  the same per-user `EngineContext` (exclusions, modesty floor, learned prefs).
+- **`swap_kept`/`another_option` cohort dashboard (Phase 7).** Server events are
+  emitted (`src/lib/events.ts` mirror + PostHog). Wire the swap-kept / revert /
+  cap-hit funnel into the Phase 7 telemetry dashboard.
+- **Direct one-tap 👎 from the Today card.** Feedback is reachable via the swap
+  sheet ("Not for me") and the cap state. A card-level overflow 👎 that opens
+  the sheet straight to the feedback view is a small nicety for Phase 4's
+  card rebuild (kept out of chrome now to respect §4.5 no-emoji-in-chrome).

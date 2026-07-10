@@ -16,6 +16,7 @@ import { OCCASIONS, type OutfitSuggestion, type WardrobeItem, type DailyRecommen
 import { WornTodayButton } from "@/app/(app)/outfits/[requestId]/worn-today-button";
 import { getWeatherContext, type WeatherContext } from "@/lib/weather";
 import { userLocalDate } from "@/lib/daily-drop";
+import { capState } from "@/lib/swap-caps";
 import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
 import { PrepareDropButton } from "./prepare-drop-button";
 import { StreakFlame } from "@/components/wearwise/StreakFlame";
@@ -643,6 +644,29 @@ async function loadTodayDrop(
     };
   }
 
+  // Phase 3: Why-This-Works lines come straight from the stored scoring
+  // factors (1:1, never free-generated). Cap snapshot + undo availability drive
+  // the SwapSheet. A "session" ~= a drop day, so the row count is the ordinal.
+  const factor = (rec.factor_breakdown ?? {}) as { whyThisWorks?: unknown };
+  const whyThisWorks = Array.isArray(factor.whyThisWorks)
+    ? (factor.whyThisWorks as unknown[]).filter((w): w is string => typeof w === "string").slice(0, 3)
+    : [];
+  const { count: dropCount } = await supabase
+    .from("daily_recommendations")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  const capS = capState({
+    swapsUsed: rec.swaps_used ?? 0,
+    optionsUsed: rec.options_used ?? 0,
+    sessionOrdinal: dropCount ?? 1,
+  });
+  const cap = {
+    swapRemaining: Number.isFinite(capS.swapRemaining) ? capS.swapRemaining : null,
+    optionRemaining: Number.isFinite(capS.optionRemaining) ? capS.optionRemaining : null,
+    sessionExempt: capS.sessionExempt,
+  };
+  const hasUndo = Array.isArray(rec.pre_swap_item_ids) && rec.pre_swap_item_ids.length > 0;
+
   const view: DailyDropView = {
     id: rec.id,
     status: rec.status,
@@ -652,6 +676,9 @@ async function loadTodayDrop(
     dailyInsight: rec.daily_insight,
     itemIds: ids,
     items,
+    whyThisWorks,
+    cap,
+    hasUndo,
   };
   return { view };
 }

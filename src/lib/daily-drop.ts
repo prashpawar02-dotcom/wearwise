@@ -4,7 +4,8 @@ import { isWearableItem } from "@/lib/wardrobe";
 import { defaultContext } from "@/lib/outfit-engine";
 import { constrainedInventoryNote, DEFAULT_WASH_CYCLE_DAYS, daysSinceDate } from "@/lib/laundry";
 import { explainSelectedOutfit } from "@/lib/engine/recommend";
-import type { EngineOccasion } from "@/lib/engine/types";
+import { lockAndReplaceCandidates } from "@/lib/engine/swap";
+import type { EngineContext, EngineOccasion } from "@/lib/engine/types";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -321,6 +322,12 @@ interface UpsertInput {
   factor_breakdown?: Record<string, unknown> | null;
   is_dual_pick?: boolean;
   engine_version?: string | null;
+  /** Phase 3 (migration 0022): swap infra. */
+  swap_candidates?: Record<string, string[]>;
+  base_item_ids?: string[];
+  pre_swap_item_ids?: string[] | null;
+  swaps_used?: number;
+  options_used?: number;
 }
 
 async function upsertRecommendation(
@@ -332,7 +339,16 @@ async function upsertRecommendation(
   const { data, error } = await supabase
     .from("daily_recommendations")
     .upsert(
-      { ...input, opened_at: null, worn_at: null, skipped_at: null, updated_at: new Date().toISOString() },
+      {
+        ...input,
+        opened_at: null, worn_at: null, skipped_at: null,
+        // Phase 3: a fresh/re-prepared drop starts the day with no swaps/options
+        // used and nothing to undo. Explicit so a forced re-prepare resets caps.
+        swaps_used: input.swaps_used ?? 0,
+        options_used: input.options_used ?? 0,
+        pre_swap_item_ids: input.pre_swap_item_ids ?? null,
+        updated_at: new Date().toISOString(),
+      },
       { onConflict: "user_id,local_date" }
     )
     .select("*")
@@ -435,12 +451,16 @@ export async function prepareDailyDrop(
   let weatherAdvice: string | null = null;
   let weatherAvailable = false;
   let preferLayer = false;
+  let weatherTempC: number | null = null;
+  let weatherIsRaining = false;
   if (profile.weather_advice_enabled && profile.city) {
     const weather = await getWeatherContext(profile.city);
     if (weather) {
       weatherAvailable = true;
       weatherSummary = `${weather.tempC}° · ${weather.summary}`;
       weatherAdvice = weather.advice;
+      weatherTempC = weather.tempC;
+      weatherIsRaining = weather.category === "rainy";
       preferLayer = weather.category === "rainy" || weather.category === "windy" || weather.tempC < 20;
     }
   }
@@ -482,7 +502,22 @@ export async function prepareDailyDrop(
   // (Phase 1). It does NOT change which outfit was selected; Phase 4 rewires
   // selection itself onto recommendOutfits().
   const engineOccasion: EngineOccasion = plan.core === "traditional" ? "ethnic" : "casual";
-  const engineExplain = explainSelectedOutfit(plan.items, defaultContext(engineOccasion));
+  // One weather-aware context reused for BOTH the stored explanation and the
+  // Phase 3 swap precompute, so Why-This-Works and swap candidates agree.
+  const engineCtx: EngineContext = {
+    ...defaultContext(engineOccasion),
+    weather: { tempC: weatherTempC, isRaining: weatherIsRaining },
+  };
+  const engineExplain = explainSelectedOutfit(plan.items, engineCtx);
+
+  // ---- Phase 3: precompute up to 5 lock-and-replace candidates per outfit
+  // piece so a swap renders < 1s p75. IDs ONLY — never image paths/URLs. Keyed
+  // by the outfit item id the user would tap. Empty array = complete / none.
+  const swapCandidatesMap: Record<string, string[]> = {};
+  for (const it of plan.items) {
+    const res = lockAndReplaceCandidates(allItems, plan.items, it, engineCtx, 5);
+    swapCandidatesMap[it.id] = res.status === "ok" ? res.candidates.map((c) => c.id) : [];
+  }
 
   // Constrained-inventory honesty line (Phase 2): when an occasion-critical
   // category is mostly in the wash, say so once per wash-cycle (never a push).
@@ -502,6 +537,12 @@ export async function prepareDailyDrop(
     factor_breakdown: engineExplain.factor_breakdown,
     is_dual_pick: engineExplain.is_dual_pick,
     engine_version: "v2",
+    // Phase 3: precomputed swap candidates + pristine base outfit (ids only).
+    swap_candidates: swapCandidatesMap,
+    base_item_ids: plan.items.map((i) => i.id),
+    swaps_used: 0,
+    options_used: 0,
+    pre_swap_item_ids: null,
     alt_item_ids: altSets,
     alt_cursor: 0,
     weather_summary: weatherSummary,

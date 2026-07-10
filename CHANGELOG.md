@@ -1,5 +1,65 @@
 # WearWise — Changelog
 
+## Phase 3 — Swap One Item · Another Option · Why This Works (2026-07-10)
+
+The trust features. The outfit the user liked stays; only what they asked
+changes; every outfit explains itself. Swaps move from Pro-gated to **free with
+caps** (handbook §5 P3, the decided model), and every swap is lock-and-replace:
+the rest of the look is contractually stable.
+
+**Schema — migration `0022_swap_trust.sql` (+ down), applied to the `wearwise`
+project (additive, reversible).**
+
+- `daily_recommendations`: `swap_candidates` (precomputed top-5 per slot, IDs
+  only), `base_item_ids` (pristine generated outfit), `pre_swap_item_ids`
+  (exact pre-swap snapshot for undo), `swaps_used` / `options_used` cap counters
+  (non-negative CHECKs). A fresh/re-prepared drop resets counters + undo.
+- New `drop_feedback` table (👎 + one optional reason chip: too_formal /
+  not_my_style / uncomfortable / weather / repeat), owner-insert + owner/admin
+  read RLS. Corrections are append-only and **always free**.
+
+**Engine (pure, tested).**
+
+- `src/lib/engine/swap.ts` — lock-and-replace: swapping one item locks every
+  other slot + occasion + formality window + colour theme; candidates must pass
+  ALL hard filters against the locked items (fail closed) and are ranked by
+  `outfit_score`, top-5. Layer/Accessory swaps resolve to "none — this outfit is
+  complete" as a first-class result; core slots return a specific, actionable
+  no-candidate message (never silently relaxes a filter). `moodSwap` changes the
+  minimum items (1, max 2, fewest-changes-first) toward More formal / casual /
+  comfortable / modest / Weather-safer. Every replacement's one-line reason is
+  drawn 1:1 from a real scoring factor of the resulting outfit.
+- `src/lib/swap-caps.ts` — decided caps: 3 swaps/day, 2 options/drop; first 3
+  sessions cap-exempt. Confidence-framed cap copy verbatim from §5 P3 **with the
+  Pro line omitted** (TODO hook `PRO_UPSELL_LINE` + `capMessage({ includePro })`
+  for Phase 8).
+- Generation precomputes top-5 candidates per outfit piece (`swap_candidates`)
+  so a swap renders < 1s p75.
+
+**API (cap-gated, server-authoritative, telemetry).**
+
+- `POST /api/daily-drop/swap` reworked from Pro-gate to cap-gate; validates the
+  replacement against the precompute (or re-derives), snapshots the pre-swap
+  outfit, re-explains, counts the swap. `POST /mood-swap`, `POST /put-back`
+  (undo; no cap refund), `POST /feedback` (always free) added.
+  `POST /another-option` cap-gated (2/drop) with cache-first alternates.
+  `GET /swap-candidates` returns lock-and-replace candidates + reasons + slot +
+  cap. Events: `swap_requested`/`swap_kept`/`swap_reverted`, `another_option`,
+  `cap_hit_swap`/`cap_hit_option`, `feedback_negative(reason)`, `why_expanded`.
+
+**UI.**
+
+- `SwapSheet` bottom sheet: item chips + mood chips + separated "New mood";
+  result row **[Keep it] [Try another] [Put back]**; specific no-candidate + cap
+  states; "Not for me" feedback with soft ack ("Noted — tomorrow gets sharper").
+- `WhyThisWorks` collapsible chip on the Today card, rendered 1:1 from stored
+  scoring factors. Today card's Swap / Show-another now open the sheet.
+
+**Tests / quality.** `tsc` clean · ESLint clean · 29 new pure unit tests
+(`tests/engine/swap.test.ts`) green alongside the existing 28 (golden +
+laundry): cap counting incl. session exemption, unlocked-slot immutability,
+undo integrity, explanation-factor 1:1 mapping, completion + mood-min-change.
+
 ## Phase 2 — Laundry / Availability System (2026-07-09)
 
 The app now always knows what's clean, with zero nagging. Availability is a hard

@@ -1,32 +1,24 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { isWearableItem } from "@/lib/wardrobe";
 import { getFlags } from "@/lib/flags";
 import { logAppEvent } from "@/lib/events";
 import { capMessage, capState } from "@/lib/swap-caps";
-import {
-  buildSwapContext, explainForItems, capSummary, sessionOrdinal,
-} from "@/lib/swap-server";
-import { lockAndReplaceCandidates } from "@/lib/engine/swap";
+import { buildSwapContext, explainForItems, capSummary, sessionOrdinal } from "@/lib/swap-server";
+import { moodSwap, MOODS, type Mood } from "@/lib/engine/swap";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 /**
- * Swap ONE item in today's Daily Drop — lock-and-replace (Phase 3).
+ * Mood swap — re-theme with the FEWEST changes (1, max 2) toward a mood
+ * (More formal / casual / comfortable / modest / Weather-safer). Counts against
+ * the daily swap cap. Fail closed: every result passes all hard filters. When
+ * nothing clean improves the mood without breaking the look, returns an honest
+ * no_candidate (no cap consumed).
  *
- * POST { recommendationId, replaceItemId, replacementItemId }
- *  -> { status: "updated" | "cap_reached" | "error", selectedItemIds, reason,
- *      whyThisWorks, cap }
- *
- * Contract: every OTHER slot + occasion + formality window + colour theme stays
- * locked; the replacement must pass ALL hard filters against the locked items
- * (fail closed). Swaps are FREE with a cap (3/day, first 3 sessions exempt),
- * enforced HERE server-side. The exact pre-swap outfit is snapshotted for undo.
+ * POST { recommendationId, mood }
+ *  → { status: "updated" | "no_candidate" | "cap_reached" | "error", ... }
  */
-function usable(item: WardrobeItem): boolean {
-  return item.ai_tag_status !== "analyzing" && item.ai_tag_status !== "failed";
-}
 function orderedOutfit(ids: string[], all: WardrobeItem[]): WardrobeItem[] {
   const byId = new Map(all.map((i) => [i.id, i]));
   return ids.map((id) => byId.get(id)).filter((i): i is WardrobeItem => Boolean(i));
@@ -42,12 +34,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ status: "disabled", message: "Swaps are taking a short break — back soon." });
   }
 
-  let body: { recommendationId?: string; replaceItemId?: string; replacementItemId?: string } = {};
+  let body: { recommendationId?: string; mood?: string } = {};
   try { body = await req.json(); } catch {
     return NextResponse.json({ status: "error", reason: "bad_request" }, { status: 400 });
   }
-  const { recommendationId, replaceItemId, replacementItemId } = body;
-  if (!recommendationId || !replaceItemId || !replacementItemId) {
+  const { recommendationId, mood } = body;
+  if (!recommendationId || !mood || !MOODS.includes(mood as Mood)) {
     return NextResponse.json({ status: "error", reason: "bad_request" }, { status: 400 });
   }
 
@@ -57,15 +49,6 @@ export async function POST(req: Request) {
   const rec = recData as DailyRecommendation | null;
   if (!rec) return NextResponse.json({ status: "error", reason: "not_found" }, { status: 404 });
 
-  const selectedIds = rec.selected_item_ids ?? [];
-  if (!selectedIds.includes(replaceItemId)) {
-    return NextResponse.json({ status: "error", reason: "not_in_outfit" }, { status: 400 });
-  }
-  if (selectedIds.includes(replacementItemId)) {
-    return NextResponse.json({ status: "error", reason: "already_in_outfit" }, { status: 400 });
-  }
-
-  // ---- CAP GATE (server-authoritative) ----
   const ordinal = await sessionOrdinal(supabase, user.id);
   const capBefore = capState({
     swapsUsed: rec.swaps_used ?? 0, optionsUsed: rec.options_used ?? 0, sessionOrdinal: ordinal,
@@ -80,33 +63,20 @@ export async function POST(req: Request) {
   const profile = profileData as Profile | null;
   const allItems = (itemData ?? []) as WardrobeItem[];
 
-  const replaceItem = allItems.find((i) => i.id === replaceItemId);
-  const replacement = allItems.find((i) => i.id === replacementItemId);
-  if (!replaceItem || !replacement) {
-    return NextResponse.json({ status: "error", reason: "not_found" }, { status: 404 });
-  }
-  if (!isWearableItem(replacement) || !usable(replacement)) {
-    return NextResponse.json({ status: "error", reason: "replacement_unavailable" }, { status: 400 });
-  }
-
-  // ---- LOCK-AND-REPLACE LEGALITY (fail closed) ----
+  const selectedIds = rec.selected_item_ids ?? [];
+  const outfit = orderedOutfit(selectedIds, allItems);
   const ctx = await buildSwapContext(profile, rec);
-  const precomputed = rec.swap_candidates?.[replaceItemId];
-  let valid = Array.isArray(precomputed) && precomputed.includes(replacementItemId);
-  if (!valid) {
-    const outfit = orderedOutfit(selectedIds, allItems);
-    const res = lockAndReplaceCandidates(allItems, outfit, replaceItem, ctx, 25);
-    valid = res.status === "ok" && res.candidates.some((c) => c.id === replacementItemId);
-  }
-  if (!valid) {
-    return NextResponse.json({ status: "error", reason: "invalid_replacement" }, { status: 400 });
+
+  const result = moodSwap(allItems, outfit, mood as Mood, ctx);
+  if (result.status !== "ok") {
+    // No cap consumed — the user got no new outfit.
+    return NextResponse.json({ status: "no_candidate", message: result.message, mood });
   }
 
-  // ---- APPLY: snapshot for undo, swap the one item, re-explain, count the swap ----
-  const newIds = selectedIds.map((id) => (id === replaceItemId ? replacementItemId : id));
+  const newIds = result.newItemIds;
   const newOutfit = orderedOutfit(newIds, allItems);
   const explain = explainForItems(newOutfit, ctx);
-  const reason = explain.whyThisWorks[0] ?? "Keeps the look balanced for today";
+  const reason = result.reason ?? explain.whyThisWorks[0] ?? "A cleaner take for the mood you asked for";
 
   const { error: upErr } = await supabase
     .from("daily_recommendations")
@@ -123,14 +93,16 @@ export async function POST(req: Request) {
     .eq("id", recommendationId).eq("user_id", user.id);
   if (upErr) return NextResponse.json({ status: "error", reason: "db_error" }, { status: 500 });
 
-  await logAppEvent("swap_kept", user.id, { swaps_used: (rec.swaps_used ?? 0) + 1 });
+  await logAppEvent("swap_kept", user.id, { swaps_used: (rec.swaps_used ?? 0) + 1, mood_swap: true });
 
   const capAfter = capState({
     swapsUsed: (rec.swaps_used ?? 0) + 1, optionsUsed: rec.options_used ?? 0, sessionOrdinal: ordinal,
   });
   return NextResponse.json({
     status: "updated",
+    mood,
     selectedItemIds: newIds,
+    changedItemIds: [...result.removedItemIds, ...result.addedItemIds],
     reason,
     whyThisWorks: explain.whyThisWorks,
     cap: capSummary(capAfter),

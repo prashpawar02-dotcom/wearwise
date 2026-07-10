@@ -13,3 +13,9 @@ export {
 } from "@/lib/engine/guards";
 export { engineRole } from "@/lib/engine/classify";
 export { loadEngineContext } from "@/lib/engine/loadContext";
+export {
+  swapSlot, slotLabel, isCompletionSlot, lockedItems,
+  lockAndReplaceCandidates, noCandidateMessage,
+  moodSwap, MOODS, MOOD_LABEL,
+} from "@/lib/engine/swap";
+export type { SwapSlot, SwapCandidate, LockReplaceResult, Mood, MoodSwapResult } from "@/lib/engine/swap";

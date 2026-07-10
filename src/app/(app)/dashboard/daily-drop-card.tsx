@@ -9,15 +9,19 @@ import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/button";
 import { SaveLookButton } from "@/components/wearwise/SaveLookButton";
 import { PostWearSheet } from "@/components/wearwise/PostWearSheet";
+import { WhyThisWorks } from "@/components/wearwise/WhyThisWorks";
+import { SwapSheet, type CapView } from "@/components/wearwise/SwapSheet";
 import { track } from "@/lib/analytics";
 import type { Disposition } from "@/lib/laundry";
 
 /**
  * Today's Drop card — renders a prepared daily_recommendation on the dashboard.
  * Signed image URLs are passed in as props (resolved server-side); this card
- * never fetches or constructs image paths itself. "Wear this" marks the drop
- * worn; "Swap one item" and "Another option" call server routes that mutate the
- * SAME recommendation row (item IDs only — never image URLs), then refresh.
+ * never fetches or constructs image paths itself.
+ *
+ * Phase 3: "Swap one thing" and "Show another" open the SwapSheet (lock-and-
+ * replace, mood swaps, full re-theme, caps, feedback, put-back). "Why this
+ * works" is a collapsible chip rendered from stored scoring factors.
  */
 export interface DailyDropItemView {
   id: string;
@@ -37,9 +41,14 @@ export interface DailyDropView {
   dailyInsight: string | null;
   itemIds: string[];
   items: DailyDropItemView[];
+  /** Phase 3: top-3 Why-This-Works lines (1:1 with stored scoring factors). */
+  whyThisWorks: string[];
+  /** Phase 3: server-computed cap snapshot for the swap sheet. */
+  cap: CapView | null;
+  /** Phase 3: true when a swap can be undone (pre-swap snapshot exists). */
+  hasUndo: boolean;
 }
 
-type Candidate = { id: string; label: string; sub: string | null; image: string | null };
 type RepeatStatus = "no_history" | "repeat_safe" | "one_recent" | "multiple_recent";
 
 const RECENT_DAYS = 7;
@@ -80,14 +89,9 @@ export function DailyDropCard({
   const [postWearOpen, setPostWearOpen] = useState(false);
   const [postWearSaving, setPostWearSaving] = useState(false);
 
-  // Action state (swap + another option)
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [swapItemId, setSwapItemId] = useState<string | null>(null);
-  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
-  const [candidateRole, setCandidateRole] = useState<string | null>(null);
-  const [loadingCandidates, setLoadingCandidates] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [actionMsg, setActionMsg] = useState<string | null>(null);
+  // Swap sheet (Phase 3)
+  const [swapOpen, setSwapOpen] = useState(false);
+  const [swapInitial, setSwapInitial] = useState<"option" | null>(null);
 
   // ---- Trust signals (derived from the selected items' wear history) ----
   const withHistory = drop.items.filter((i) => i.lastWornAt);
@@ -107,7 +111,6 @@ export function DailyDropCard({
       : "Works for your city weather"
     : "Weather unavailable";
 
-  // Fire once when a prepared drop is shown. Non-sensitive: status + counts only.
   useEffect(() => {
     track("daily_drop_viewed", {
       status: drop.status === "failed" ? "failed" : "prepared",
@@ -141,17 +144,11 @@ export function DailyDropCard({
     }
 
     track("daily_drop_worn", { item_count: drop.itemIds.length });
-
-    // Habit loop (Module C): logging an outfit feeds the streak. Fire and
-    // forget — idempotent per day on the server, must never block the action.
     fetch("/api/streaks/checkin", { method: "POST" }).catch(() => {});
 
     setWorn(true);
     setSaving(false);
 
-    // Post-wear laundry sheet (Phase 2): quietly ask where each piece goes,
-    // unless the user has turned it off. We don't refresh yet — the sheet
-    // resolves the laundry state, then we refresh once on close.
     if (postwearEnabled && drop.items.length > 0) {
       setPostWearOpen(true);
     } else {
@@ -186,8 +183,7 @@ export function DailyDropCard({
         });
       }
     } catch {
-      // Non-blocking: the outfit is already logged worn. Laundry state can be
-      // fixed from the Wardrobe if this write failed.
+      // Non-blocking: the outfit is already logged worn.
     } finally {
       setPostWearSaving(false);
       setPostWearOpen(false);
@@ -202,116 +198,18 @@ export function DailyDropCard({
   }
 
   function openSwap() {
-    setPanelOpen(true);
-    setSwapItemId(null);
-    setCandidates(null);
-    setActionMsg(null);
+    setSwapInitial(null);
+    setSwapOpen(true);
     track("daily_drop_swap_started", { selected_item_count: drop.items.length });
   }
-
-  function closeSwap() {
-    setPanelOpen(false);
-    setSwapItemId(null);
-    setCandidates(null);
-  }
-
-  async function chooseReplace(itemId: string) {
-    setSwapItemId(itemId);
-    setCandidates(null);
-    setLoadingCandidates(true);
-    try {
-      const res = await fetch(
-        `/api/daily-drop/swap-candidates?recommendationId=${encodeURIComponent(drop.id)}&replaceItemId=${encodeURIComponent(itemId)}`
-      );
-      const data = await res.json().catch(() => ({}));
-      if (data.status === "ok") {
-        setCandidates(data.candidates ?? []);
-        setCandidateRole(data.role ?? null);
-      } else {
-        setCandidates([]);
-      }
-    } catch {
-      setCandidates([]);
-    } finally {
-      setLoadingCandidates(false);
-    }
-  }
-
-  async function applySwap(replaceItemId: string, replacementItemId: string) {
-    setUpdating(true);
-    setActionMsg(null);
-    try {
-      const res = await fetch("/api/daily-drop/swap", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendationId: drop.id, replaceItemId, replacementItemId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 402 || data.status === "upgrade_required") {
-        track("paywall_hit", { source: "swap_locked" });
-        router.push("/upgrade?from=swap");
-        return;
-      }
-      if (data.status === "updated") {
-        track("daily_drop_swap_completed", {
-          status: "updated",
-          replaced_role: candidateRole,
-          candidate_count: candidates?.length ?? 0,
-          selected_item_count: data.selectedItemIds?.length ?? drop.items.length,
-        });
-        closeSwap();
-        router.refresh();
-        return;
-      }
-      track("daily_drop_swap_failed", { reason_code: data.reason ?? "error" });
-      setActionMsg("We couldn't swap that piece. Please try again.");
-    } catch {
-      track("daily_drop_swap_failed", { reason_code: "network" });
-      setActionMsg("We couldn't swap that piece. Please try again.");
-    } finally {
-      setUpdating(false);
-    }
-  }
-
-  async function anotherOption() {
-    setUpdating(true);
-    setActionMsg(null);
-    setPanelOpen(false);
+  function openAnother() {
+    setSwapInitial("option");
+    setSwapOpen(true);
     track("daily_drop_another_option_clicked", { selected_item_count: drop.items.length });
-    try {
-      const res = await fetch("/api/daily-drop/another-option", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendationId: drop.id }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 402 || data.status === "upgrade_required") {
-        track("paywall_hit", { source: "another_option_locked" });
-        router.push("/upgrade?from=swap");
-        return;
-      }
-      if (data.status === "updated") {
-        track("daily_drop_another_option_result", { status: "updated", selected_item_count: data.selectedItemIds?.length ?? 0 });
-        router.refresh();
-        return;
-      }
-      if (data.status === "not_enough_items") {
-        track("daily_drop_another_option_result", { status: "not_enough_items", selected_item_count: drop.items.length });
-        setActionMsg("Add a few more available clothes to create another strong option.");
-      } else {
-        track("daily_drop_another_option_result", { status: "error", selected_item_count: drop.items.length });
-        setActionMsg("We couldn't create another option right now. Please try again.");
-      }
-    } catch {
-      track("daily_drop_another_option_result", { status: "error", selected_item_count: drop.items.length });
-      setActionMsg("We couldn't create another option right now. Please try again.");
-    } finally {
-      setUpdating(false);
-    }
   }
 
   const thumbs = drop.items.map((i) => i.image).filter((u): u is string => Boolean(u));
-  const busy = saving || updating;
+  const busy = saving;
 
   return (
     <>
@@ -367,13 +265,8 @@ export function DailyDropCard({
         <WhyLine icon={<Icon.Hanger className="h-3.5 w-3.5 text-plum" />} text="Uses available clothes only" />
       </div>
 
-      {/* Why it works (stylist reasoning) */}
-      {drop.reasoning && (
-        <div className="mt-3 rounded-ww-md border border-lavender/40 bg-lavender/[0.12] p-3">
-          <p className="ww-eyebrow text-plum">Why this works</p>
-          <p className="mt-0.5 text-sm leading-snug text-charcoal">{drop.reasoning}</p>
-        </div>
-      )}
+      {/* Why This Works — collapsible, rendered 1:1 from stored scoring factors */}
+      <WhyThisWorks lines={drop.whyThisWorks} source="today" />
 
       {/* Calm daily insight */}
       {drop.dailyInsight && (
@@ -388,10 +281,10 @@ export function DailyDropCard({
       {/* Secondary actions */}
       <div className="mt-2 grid grid-cols-2 gap-2">
         <Button variant="secondary" size="sm" onClick={openSwap} disabled={busy || worn}>
-          <Icon.Shuffle className="h-3.5 w-3.5" /> Swap one item
+          <Icon.Shuffle className="h-3.5 w-3.5" /> Swap one thing
         </Button>
-        <Button variant="secondary" size="sm" onClick={anotherOption} disabled={busy || worn}>
-          <Icon.Sparkle className="h-3.5 w-3.5" /> Another option
+        <Button variant="secondary" size="sm" onClick={openAnother} disabled={busy || worn}>
+          <Icon.Sparkle className="h-3.5 w-3.5" /> Show another
         </Button>
       </div>
 
@@ -399,80 +292,17 @@ export function DailyDropCard({
       <div className="mt-2 flex justify-center">
         <SaveLookButton itemIds={drop.itemIds} title="Today's drop" recommendationId={drop.id} />
       </div>
-
-      {actionMsg && <p className="mt-2 text-xs text-graphite">{actionMsg}</p>}
-
-      {/* Swap panel */}
-      {panelOpen && (
-        <div className="mt-3 rounded-ww-md border border-hairline bg-ivory/60 p-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-charcoal">Swap one piece</p>
-            <button type="button" onClick={closeSwap} aria-label="Close swap panel" className="text-mist hover:text-charcoal">
-              <Icon.Close className="h-4 w-4" />
-            </button>
-          </div>
-
-          {!swapItemId ? (
-            <>
-              <p className="mt-1 text-xs text-graphite">Choose the piece to replace.</p>
-              <div className="mt-2 space-y-1.5">
-                {drop.items.map((it) => (
-                  <button
-                    key={it.id}
-                    type="button"
-                    onClick={() => chooseReplace(it.id)}
-                    disabled={updating}
-                    className="flex w-full items-center justify-between rounded-ww-sm border border-hairline bg-bone px-3 py-2 text-left text-sm text-charcoal transition-colors hover:bg-stone/40 disabled:opacity-50"
-                  >
-                    <span className="truncate">{it.label}</span>
-                    <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 text-mist" />
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => { setSwapItemId(null); setCandidates(null); }}
-                className="mt-1 inline-flex items-center gap-1 text-xs text-graphite hover:text-charcoal"
-              >
-                <Icon.ArrowLeft className="h-3 w-3" /> Back
-              </button>
-              {loadingCandidates ? (
-                <p className="mt-2 text-xs text-graphite">Finding options…</p>
-              ) : candidates && candidates.length > 0 ? (
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  {candidates.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => applySwap(swapItemId, c.id)}
-                      disabled={updating}
-                      className="overflow-hidden rounded-ww-sm border border-hairline bg-stone/50 text-left transition-transform active:scale-[0.98] disabled:opacity-50"
-                    >
-                      <div className="aspect-square bg-stone/60">
-                        {c.image ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={c.image} alt="" className="h-full w-full object-contain p-1" />
-                        ) : (
-                          <div className="grid h-full place-items-center text-mist"><Icon.Hanger className="h-5 w-5" /></div>
-                        )}
-                      </div>
-                      <p className="truncate px-1.5 py-1 text-[11px] text-charcoal">{c.label}</p>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-2 text-xs text-graphite">
-                  No available replacement for this piece. Add more clothes or mark items available.
-                </p>
-              )}
-            </>
-          )}
-        </div>
-      )}
     </Card>
+
+    <SwapSheet
+      open={swapOpen}
+      onClose={() => setSwapOpen(false)}
+      recommendationId={drop.id}
+      items={drop.items.map((it) => ({ id: it.id, label: it.label, image: it.image, category: it.category ?? null }))}
+      cap={drop.cap}
+      initialAction={swapInitial}
+      onChanged={() => router.refresh()}
+    />
 
     <PostWearSheet
       open={postWearOpen}
