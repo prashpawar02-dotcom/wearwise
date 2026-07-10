@@ -30,6 +30,8 @@ export interface DailyDropItemView {
   image: string | null;
   lastWornAt: string | null;
   category?: string | null;
+  /** Phase 3 hotfix: canonical swap slot label (Top/Bottom/Shoes/Layer/Accessory). */
+  slot?: string | null;
 }
 
 export interface DailyDropView {
@@ -298,7 +300,7 @@ export function DailyDropCard({
       open={swapOpen}
       onClose={() => setSwapOpen(false)}
       recommendationId={drop.id}
-      items={drop.items.map((it) => ({ id: it.id, label: it.label, image: it.image, category: it.category ?? null }))}
+      items={drop.items.map((it) => ({ id: it.id, label: it.label, image: it.image, category: it.category ?? null, slot: it.slot ?? null }))}
       cap={drop.cap}
       initialAction={swapInitial}
       onChanged={() => router.refresh()}

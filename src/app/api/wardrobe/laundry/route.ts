@@ -4,6 +4,7 @@ import {
   toInWash, toAvailable, toArchived, toggleWashTransition,
   ASK_ME_LESS_THRESHOLD, type Disposition, type LaundryTransition,
 } from "@/lib/laundry";
+import { prepareDailyDrop, userLocalDate } from "@/lib/daily-drop";
 import type { AvailabilityStatus, WardrobeItem } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -77,6 +78,9 @@ export async function POST(req: Request) {
       if (t.availability_status === "in_wash") {
         await bumpWashStats(supabase, user.id, [(cur as { category: string | null }).category]);
       }
+      if (t.availability_status !== "available") {
+        await invalidateActiveDrop(supabase, user.id, [itemId]);
+      }
       return NextResponse.json({ status: "ok", availability_status: t.availability_status });
     }
 
@@ -139,6 +143,7 @@ export async function POST(req: Request) {
         dispositions.map((d) => ({ category: catById.get(d.itemId) ?? null, washed: d.to === "wash" }))
       );
 
+      if (toWash.length) await invalidateActiveDrop(supabase, user.id, toWash);
       return NextResponse.json({ status: "ok", washed: toWash.length, wardrobe: toWardrobe.length });
     }
 
@@ -182,6 +187,34 @@ export async function POST(req: Request) {
 }
 
 type Db = ReturnType<typeof createClient>;
+
+/**
+ * Write-time invalidation (Phase 3 hotfix). When an item leaves "available",
+ * regenerate TODAY's active daily drop if it referenced that item — this also
+ * refreshes the precomputed swap_candidates + alt_item_ids (prepareDailyDrop
+ * recomputes them). Best-effort and never blocks the laundry response; read-time
+ * validation remains the authoritative safety net for races and old rows.
+ */
+async function invalidateActiveDrop(supabase: Db, userId: string, affectedIds: string[]) {
+  try {
+    const ids = affectedIds.filter(Boolean);
+    if (ids.length === 0) return;
+    const { data: prof } = await supabase.from("profiles").select("timezone").eq("id", userId).maybeSingle();
+    const localDate = userLocalDate((prof as { timezone: string | null } | null)?.timezone ?? null);
+    const { data: rec } = await supabase
+      .from("daily_recommendations")
+      .select("selected_item_ids, status")
+      .eq("user_id", userId)
+      .eq("local_date", localDate)
+      .maybeSingle();
+    const sel = (rec as { selected_item_ids?: string[] } | null)?.selected_item_ids ?? [];
+    if (sel.some((id) => ids.includes(id))) {
+      await prepareDailyDrop(userId, { force: true, supabase });
+    }
+  } catch {
+    // best-effort; read-time validation is the safety net
+  }
+}
 
 /** Normalise a wardrobe category into a stable stats bucket. */
 function catKey(category: string | null | undefined): string {

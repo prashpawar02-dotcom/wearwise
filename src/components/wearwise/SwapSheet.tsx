@@ -21,6 +21,8 @@ export interface SwapSheetItem {
   label: string;
   image: string | null;
   category?: string | null;
+  /** Canonical slot label (Top/Bottom/Shoes/Layer/Accessory); falls back to label. */
+  slot?: string | null;
 }
 export interface CapView {
   swapRemaining: number | null;   // null = unlimited (exempt)
@@ -85,6 +87,7 @@ export function SwapSheet({
     setCandidates([]); setSlotName(null); setMessage(null); setReason(null);
     setWhy([]); setCapMsg(null); setAck(null); setHasUndo(false);
     if (initialAction === "option") void runOption();
+    else track("swap_sheet_opened", { item_count: items.length });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -137,6 +140,7 @@ export function SwapSheet({
       const data = await res.json().catch(() => ({}));
       if (data.status === "updated") applyResult(data, "swap");
       else if (data.status === "cap_reached") handleCap("swap", data);
+      else if (data.status === "stale") { setMessage(data.message ?? "That option just changed — here are fresh matches."); if (selected) void loadCandidates(selected); }
       else setMessage("We couldn't swap that piece. Please try again.");
     } catch {
       setMessage("We couldn't swap that piece. Please try again.");
@@ -231,11 +235,11 @@ export function SwapSheet({
                   key={it.id}
                   type="button"
                   disabled={busy}
-                  onClick={() => loadCandidates(it)}
+                  onClick={() => { track("swap_slot_selected", { slot: it.slot ?? "item" }); void loadCandidates(it); }}
                   className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-bone px-3 py-1.5 text-[13px] font-medium text-charcoal transition-colors hover:border-hairline-strong disabled:opacity-50"
                 >
                   <Icon.Shuffle className="h-3.5 w-3.5 text-plum" />
-                  {it.label}
+                  {it.slot ?? it.label}
                 </button>
               ))}
             </div>

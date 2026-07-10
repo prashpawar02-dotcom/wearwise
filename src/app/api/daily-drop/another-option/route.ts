@@ -8,6 +8,7 @@ import { isUuid, parseJsonBody } from "@/lib/validate";
 import { logAppEvent } from "@/lib/events";
 import { capMessage, capState } from "@/lib/swap-caps";
 import { buildSwapContext, explainForItems, capSummary, sessionOrdinal } from "@/lib/swap-server";
+import { validateOutfitCurrent } from "@/lib/outfit-validity";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -74,7 +75,13 @@ export async function POST(req: Request) {
   const cursor = rec.alt_cursor ?? 0;
   if (cursor < altSets.length) {
     const cached = altSets[cursor];
-    if (Array.isArray(cached) && cached.length > 0) {
+    // Cache safety: a precomputed alternate can go stale (an item entered the
+    // wash after generation). Only serve it if every item is still available;
+    // otherwise fall through to a fresh deterministic recompute.
+    const cachedValid = cached && cached.length > 0
+      ? await validateOutfitCurrent(supabase, user.id, cached, { ctx })
+      : { valid: false };
+    if (Array.isArray(cached) && cached.length > 0 && cachedValid.valid) {
       const explain = explainForItems(orderedOutfit(cached, allItems), ctx);
       const reason = explain.whyThisWorks[0] ?? ANOTHER_OPTION_REASONING;
       const { error: upErr } = await supabase

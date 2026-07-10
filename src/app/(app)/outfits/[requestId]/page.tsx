@@ -43,6 +43,19 @@ export default async function OutfitsPage({ params }: { params: { requestId: str
   const urls = await signWardrobePaths(items.map((i) => i.image_path));
   const itemById = new Map(items.map((i) => [i.id, i]));
 
+  // Hotfix: a suggestion is "stale" if any referenced item is missing or no
+  // longer available (in_wash / unavailable / archived). Stale looks stay
+  // visible for reference but are NEVER offered as today's wearable choice.
+  const staleById = new Map<string, boolean>(
+    suggestions.map((s) => [
+      s.id,
+      s.item_ids.some((id) => {
+        const it = itemById.get(id);
+        return !it || (it.availability_status ?? "available") !== "available";
+      }),
+    ]),
+  );
+
   return (
     <main className="min-h-dvh pb-24">
       <AppHeader title="Outfit ideas" back="/dashboard" />
@@ -77,17 +90,13 @@ export default async function OutfitsPage({ params }: { params: { requestId: str
                     </p>
                     <Badge tone="gold">Look {idx + 1}</Badge>
                   </div>
-                  {s.description && (
-                    <p className="mt-1 text-sm text-muted-foreground">{s.description}</p>
-                  )}
-                  {s.avoid_note && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground/70">Tip:</span> {s.avoid_note}
-                    </p>
-                  )}
-                  {s.missing_item_suggestion && (
+                  {/* Hotfix: legacy free-generated copy (description / avoid tips /
+                      "Would complete it: <unowned item>") removed — it violates
+                      explainability (§3.5) and the accessory-relevance rule. */}
+                  {staleById.get(s.id) && (
                     <p className="mt-1 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground/70">Would complete it:</span> {s.missing_item_suggestion}
+                      Some pieces from this look are in the wash — it&apos;s here for
+                      reference, not offered as today&apos;s pick.
                     </p>
                   )}
 
@@ -112,19 +121,23 @@ export default async function OutfitsPage({ params }: { params: { requestId: str
                   </div>
 
                   <div className="mt-4 flex items-center gap-2">
-                    <WornTodayButton
-                      suggestionId={s.id}
-                      itemIds={s.item_ids}
-                      items={s.item_ids
-                        .map((id) => itemById.get(id))
-                        .filter((it): it is WardrobeItem => Boolean(it))
-                        .map((it) => ({
-                          id: it.id,
-                          label: it.user_facing_name ?? it.category ?? "Item",
-                          image: urls[it.image_path] ?? null,
-                          category: it.category,
-                        }))}
-                    />
+                    {/* Hotfix: a stale look (any piece in the wash) is never
+                        offered as today's wearable choice — hide "Wore this". */}
+                    {!staleById.get(s.id) && (
+                      <WornTodayButton
+                        suggestionId={s.id}
+                        itemIds={s.item_ids}
+                        items={s.item_ids
+                          .map((id) => itemById.get(id))
+                          .filter((it): it is WardrobeItem => Boolean(it))
+                          .map((it) => ({
+                            id: it.id,
+                            label: it.user_facing_name ?? it.category ?? "Item",
+                            image: urls[it.image_path] ?? null,
+                            category: it.category,
+                          }))}
+                      />
+                    )}
                     <SaveLookButton itemIds={s.item_ids} title={s.title} suggestionId={s.id} />
                     <ShareLookButton suggestionIds={[s.id]} />
                   </div>

@@ -8,6 +8,7 @@ import {
   buildSwapContext, explainForItems, capSummary, sessionOrdinal,
 } from "@/lib/swap-server";
 import { lockAndReplaceCandidates } from "@/lib/engine/swap";
+import { validateOutfitCurrent } from "@/lib/outfit-validity";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -105,6 +106,22 @@ export async function POST(req: Request) {
   // ---- APPLY: snapshot for undo, swap the one item, re-explain, count the swap ----
   const newIds = selectedIds.map((id) => (id === replaceItemId ? replacementItemId : id));
   const newOutfit = orderedOutfit(newIds, allItems);
+  // Apply-time revalidation (concurrency/cache safety): even a precomputed
+  // candidate must be re-checked NOW. Reject if any item in the resulting outfit
+  // (locked pieces included) is no longer available, or the combination fails a
+  // hard filter. The client refreshes candidates on "stale".
+  const freshness = await validateOutfitCurrent(supabase, user.id, newIds, { ctx });
+  if (!freshness.valid) {
+    await logAppEvent("stale_outfit_blocked", user.id, {
+      surface: "swap_apply", reason: freshness.invalid[0]?.reason ?? "stale",
+    });
+    return NextResponse.json({
+      status: "stale",
+      reason: "availability_changed",
+      message: "That option just changed — here are fresh matches.",
+      cap: capSummary(capBefore),
+    });
+  }
   const explain = explainForItems(newOutfit, ctx);
   const reason = explain.whyThisWorks[0] ?? "Keeps the look balanced for today";
 

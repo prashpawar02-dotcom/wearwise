@@ -15,8 +15,11 @@ import type { GarmentKind } from "@/components/ui/Icon";
 import { OCCASIONS, type OutfitSuggestion, type WardrobeItem, type DailyRecommendation } from "@/lib/types";
 import { WornTodayButton } from "@/app/(app)/outfits/[requestId]/worn-today-button";
 import { getWeatherContext, type WeatherContext } from "@/lib/weather";
-import { userLocalDate } from "@/lib/daily-drop";
+import { userLocalDate, prepareDailyDrop } from "@/lib/daily-drop";
 import { capState } from "@/lib/swap-caps";
+import { validateOutfitCurrent } from "@/lib/outfit-validity";
+import { swapSlot, slotLabel } from "@/lib/engine/swap";
+import { logAppEvent } from "@/lib/events";
 import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
 import { PrepareDropButton } from "./prepare-drop-button";
 import { StreakFlame } from "@/components/wearwise/StreakFlame";
@@ -409,7 +412,18 @@ async function buildBestPick(
   userId: string,
   supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"]
 ): Promise<BestPick | null> {
-  const top = approved[0];
+  // Hotfix: never surface a stored suggestion that contains an item which is no
+  // longer wearable (in_wash / unavailable / archived / deleted). Pick the first
+  // approved suggestion whose every item is currently available; if none, render
+  // no legacy Best Pick at all (the Daily Drop card is the canonical surface).
+  let top: ApprovedSuggestion | null = null;
+  for (const s of approved) {
+    const v = await validateOutfitCurrent(supabase, userId, s.item_ids ?? []);
+    if (v.valid) { top = s; break; }
+    await logAppEvent("stale_outfit_blocked", userId, {
+      surface: "best_pick", reason: v.invalid[0]?.reason ?? "stale",
+    });
+  }
   if (!top) return null;
 
   const rel = Array.isArray(top.request) ? top.request[0] : top.request;
@@ -447,16 +461,11 @@ async function buildBestPick(
     .map((m) => urls[m.image_path])
     .filter((u): u is string => Boolean(u));
 
+  // Hotfix: Phase-3 surfaces render explanations ONLY from real stored scoring
+  // factors (handbook §3.5). Legacy free-generated copy — "Why this works"
+  // paragraphs, avoid tips, and "Would complete it: <unowned belt>" — is removed
+  // here; the Daily Drop card carries the canonical WhyThisWorks.
   const reasoning: ReasoningItem[] = [];
-  if (top.description) {
-    reasoning.push({ tag: "Why this works", body: top.description, icon: <Icon.Sparkle className="h-3.5 w-3.5 text-plum" /> });
-  }
-  if (top.avoid_note) {
-    reasoning.push({ tag: "Keep in mind", body: top.avoid_note, icon: <Icon.Sun className="h-3.5 w-3.5 text-champagne" /> });
-  }
-  if (top.missing_item_suggestion) {
-    reasoning.push({ tag: "Would complete it", body: top.missing_item_suggestion, icon: <Icon.Hanger className="h-3.5 w-3.5 text-cobalt" /> });
-  }
 
   const hasAlternatives = approved.some((s) => s.request_id === top.request_id && s.id !== top.id);
 
@@ -601,7 +610,7 @@ async function loadTodayDrop(
     .maybeSingle();
   if (!data) return null;
 
-  const rec = data as DailyRecommendation;
+  let rec = data as DailyRecommendation;
   if (rec.status === "failed") {
     return {
       failed:
@@ -610,30 +619,52 @@ async function loadTodayDrop(
     };
   }
 
-  const ids = rec.selected_item_ids ?? [];
-  let members: WardrobeItem[] = [];
-  if (ids.length) {
-    const { data: itemData } = await supabase
-      .from("wardrobe_items")
-      .select("*")
-      .eq("user_id", userId)
-      .in("id", ids);
-    members = (itemData ?? []) as WardrobeItem[];
+  // Hotfix — read-time validity gate. A stored drop can go stale if a piece was
+  // marked in_wash / unavailable / archived (or deleted) AFTER it was prepared.
+  // Never render a stale outfit: regenerate around what's clean right now, then
+  // re-validate. If nothing valid can be formed, fall through to an honest
+  // constrained state — but never show the dirty item.
+  let ids = rec.selected_item_ids ?? [];
+  let validity = await validateOutfitCurrent(supabase, userId, ids);
+  if (ids.length > 0 && !validity.valid) {
+    await logAppEvent("stale_outfit_blocked", userId, {
+      surface: "daily_drop", reason: validity.invalid[0]?.reason ?? "stale",
+    });
+    const regen = await prepareDailyDrop(userId, { force: true, supabase });
+    if (regen.recommendation) {
+      rec = regen.recommendation;
+      ids = rec.selected_item_ids ?? [];
+      validity = await validateOutfitCurrent(supabase, userId, ids);
+      await logAppEvent("stale_outfit_regenerated", userId, { status: regen.status });
+    }
+    if (rec.status === "failed" || !validity.valid) {
+      return {
+        failed:
+          rec.reasoning ||
+          "Today's pick is refreshing around what's clean right now — check back in a moment.",
+      };
+    }
   }
+
+  const members: WardrobeItem[] = validity.items;
   const byId = new Map(members.map((m) => [m.id, m]));
   const urls = await signWardrobePaths(members.map((m) => m.image_path));
 
   const items = ids
     .map((id) => byId.get(id))
     .filter((m): m is WardrobeItem => Boolean(m))
-    .map((m) => ({
-      id: m.id,
-      label: m.user_facing_name ?? m.category ?? "Item",
-      sub: [m.category, m.color].filter(Boolean).join(" · ") || null,
-      image: urls[m.image_path] ?? null,
-      lastWornAt: m.last_worn_at,
-      category: m.category,
-    }));
+    .map((m) => {
+      const sl = swapSlot(m);
+      return {
+        id: m.id,
+        label: m.user_facing_name ?? m.category ?? "Item",
+        sub: [m.category, m.color].filter(Boolean).join(" · ") || null,
+        image: urls[m.image_path] ?? null,
+        lastWornAt: m.last_worn_at,
+        category: m.category,
+        slot: sl ? slotLabel(sl) : null,
+      };
+    });
 
   // If every item from today's pick has since been deleted, don't show an empty
   // card — surface an honest, non-blaming note instead.

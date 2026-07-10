@@ -81,3 +81,15 @@ Log only. Do not build without CEO approval / the owning phase.
   sheet ("Not for me") and the cap state. A card-level overflow 👎 that opens
   the sheet straight to the feedback view is a small nicety for Phase 4's
   card rebuild (kept out of chrome now to respect §4.5 no-emoji-in-chrome).
+
+## Phase 3 hotfix — RESOLVED (2026-07-10, not deferred)
+
+- **Stale-outfit render blocker: RESOLVED.** In-wash / unavailable / archived /
+  deleted items can no longer render on any surface. New server-only validator
+  `src/lib/outfit-validity.ts` gates every read/apply path (daily drop regenerates
+  on stale; legacy best-pick + /outfits validate; swap/another-option revalidate
+  at apply time; laundry writes invalidate the active drop). Legacy free-generated
+  copy ("Would complete it: …") removed from Phase-3 surfaces.
+- **Follow-up (Phase 4, low priority):** the legacy `/outfits/[requestId]` multi-
+  look list stays as full-alternatives-for-reference; convert to the final
+  horizontal hero carousel when Today Screen v2 rebuilds the hero.

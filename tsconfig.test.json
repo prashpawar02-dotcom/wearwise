@@ -14,6 +14,7 @@
   "include": [
     "src/lib/types.ts",
     "src/lib/outfitValidation.ts",
+    "src/lib/outfit-validity.ts",
     "src/lib/laundry.ts",
     "src/lib/swap-caps.ts",
     "src/lib/engine/types.ts",
@@ -28,6 +29,7 @@
     "tests/engine/fixtures.ts",
     "tests/engine/golden.test.ts",
     "tests/engine/laundry.test.ts",
-    "tests/engine/swap.test.ts"
+    "tests/engine/swap.test.ts",
+    "tests/engine/validity.test.ts"
   ]
 }

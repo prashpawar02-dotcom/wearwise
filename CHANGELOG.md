@@ -1,5 +1,55 @@
 # WearWise — Changelog
 
+## Phase 3 hotfix — Stale-outfit render blocker + slot-first swap + explainability (2026-07-10)
+
+Production blocker: the engine correctly excluded an `in_wash` item (engine-QA
+showed `available: 9, in_wash: 1`), yet user-facing cards still rendered it, and
+a legacy card showed free-generated copy ("Would complete it: A classic black
+belt"). Proven root cause: **read/render paths never revalidated stored/cached
+outfits against current availability**, and legacy `outfit_suggestions` copy
+bypassed explainability. No schema change.
+
+**Authoritative validator — `src/lib/outfit-validity.ts` (new, server-only).**
+`validateOutfitCurrent(supabase, userId, itemIds, { ctx? })` reloads current
+wardrobe rows (owner-scoped) and fails closed: `missing` (also covers other-user
+via RLS), `in_wash`, `unavailable`, `archived`, and — when a ctx is passed —
+`hard_filter_failed` (re-runs the hard-filter layer). Returns the still-available
+rows in input order.
+
+**Read paths repaired (never render stale).**
+- Daily Drop (`dashboard/page.tsx` `loadTodayDrop`): validates the stored drop;
+  if stale, **regenerates around what's clean** (`prepareDailyDrop force`) and
+  re-validates; if nothing valid remains, shows an honest constrained state —
+  never the dirty item. Emits `stale_outfit_blocked` / `stale_outfit_regenerated`.
+- Legacy Best Pick (`buildBestPick`): skips any approved suggestion containing an
+  unavailable/missing item (renders none rather than a stale look); the
+  free-generated reasoning ("Why this works" paragraph, avoid tip, "Would
+  complete it") is removed — the Daily Drop card's WhyThisWorks (1:1 from stored
+  factors) is the canonical explanation.
+- `/outfits/[requestId]`: same free copy removed; looks containing in-wash pieces
+  are marked historical and never offered as today's wearable choice (Wore-this
+  hidden).
+
+**Write-time invalidation + concurrency (apply-time revalidation).**
+- Laundry route: when an item leaves `available` (toggle/set_state/postwear-wash),
+  best-effort regenerates today's active drop if it referenced that item (which
+  also refreshes precomputed `swap_candidates` + `alt_item_ids`).
+- Swap apply now revalidates the FULL resulting outfit (locked pieces included)
+  at apply time — a precomputed candidate that went stale is rejected with
+  `status:"stale"` and the client reloads fresh candidates. Another-Option
+  validates its precomputed cache before serving (falls through to recompute).
+
+**Slot-first Swap UX + telemetry.** The swap sheet opens on a slot picker
+(Top/Bottom/Shoes/Layer/Accessory, computed server-side) before any candidate or
+full look. Added `swap_sheet_opened`, `swap_slot_selected`, `stale_outfit_blocked`,
+`stale_outfit_regenerated` (no duplicate firing).
+
+**Tests / quality.** `tsc` clean · ESLint clean · engine suite green: 28 golden +
+29 swap + **20 new validity/slot tests** (in_wash/unavailable/archived/missing/
+hard-filter reasons, availability restore, order preservation, slot labels).
+`next build` bundling was not runnable to completion inside the sandbox
+(webpack over the mount exceeds the shell time cap) — verify on deploy.
+
 ## Phase 3 — Swap One Item · Another Option · Why This Works (2026-07-10)
 
 The trust features. The outfit the user liked stays; only what they asked
