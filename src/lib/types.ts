@@ -62,7 +62,24 @@ export interface Profile {
   wash_cycle_days?: number;
   laundry_return_prompt_at?: string | null;
   laundry_wash_note_at?: string | null;
+  // Onboarding v2 (migration 0025, Phase 4D). `onboarding_step` disambiguates
+  // "skipped this step" from "never reached this step" for honest resume —
+  // see the migration header for why this can't be derived from other
+  // columns. `default_occasion` pre-fills occasion-form.tsx's "Use today's
+  // default" button; null = fall back to the existing weekday/weekend
+  // heuristic.
+  onboarding_step?: OnboardingStep | null;
+  default_occasion?: string | null;
 }
+
+// Resume checkpoint for Onboarding v2 — mirrors the DB check constraint
+// (migration 0025) exactly. `null` = never started (state "new").
+export type OnboardingStep = "welcome" | "context" | "style" | "wardrobe" | "ready" | "completed";
+
+// Computed (never persisted) onboarding UI state — see migration 0025's
+// header for why 4 of these 6 states need no storage at all.
+export type OnboardingState =
+  | "new" | "in_progress" | "wardrobe_incomplete" | "ready" | "completed" | "error";
 
 export interface WardrobeItem {
   id: string;

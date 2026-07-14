@@ -17,16 +17,29 @@ export interface PostWearItem {
 }
 
 /**
- * Post-wear laundry sheet (handbook §5 Phase 2). After "Wore It", quietly ask
- * where each piece goes tonight — pre-answered with smart defaults so one tap
- * (Done) completes it. Multi-item outfits get per-item chips; single-item
- * outfits collapse to the same two choices. "Ask me less" lets the user turn
- * the whole prompt off. Copy passes the flatmate test: asked once, no chore-app
- * nagging, no guilt.
+ * Post-wear laundry sheet (handbook §5 Phase 2; Phase 4C step 2). After a
+ * wear is confirmed (see WearConfirmSheet + /api/daily-drop/wear), quietly
+ * ask where each piece goes tonight — pre-answered with smart defaults so
+ * one tap (Done) completes it. Multi-item outfits get per-item chips;
+ * single-item outfits collapse to the same two choices. "Ask me less" lets
+ * the user turn the whole prompt off — it reuses the existing
+ * postwear_sheet_enabled / postwear_prompt_dismissals / ASK_ME_LESS_THRESHOLD
+ * contract (see /api/wardrobe/laundry's ask_me_less action); there is no new
+ * eligibility or learning model here. Copy passes the flatmate test: asked
+ * once, no chore-app nagging, no guilt.
  *
  * The parent owns persistence (via /api/wardrobe/laundry) and the
- * completed/dismissed telemetry; this component owns the interaction and the
- * "shown" + "ask_me_less" events.
+ * completed/dismissed/failed telemetry; this component owns the interaction
+ * and the "opened" + per-choice + "ask me less" events.
+ *
+ * Phase 4C follow-up (laundry failure visibility): wear confirmation is a
+ * separate, already-committed transaction (migration 0023) by the time this
+ * sheet is open — laundry persistence failing here must NEVER look like
+ * success. The parent keeps this sheet OPEN on failure (no unconditional
+ * close-in-finally) and passes `error` so the user sees a clear message and
+ * a Retry — the SAME Done/Ask-me-less buttons double as Retry because the
+ * user's chosen `choice` state lives in THIS component and survives a
+ * failed persist attempt untouched (nothing here unmounts or resets it).
  */
 export function PostWearSheet({
   open,
@@ -35,6 +48,7 @@ export function PostWearSheet({
   onDismiss,
   onAskMeLess,
   saving = false,
+  error = null,
 }: {
   open: boolean;
   items: PostWearItem[];
@@ -42,6 +56,10 @@ export function PostWearSheet({
   onDismiss: () => void;
   onAskMeLess: (dispositions: Record<string, Disposition>) => void;
   saving?: boolean;
+  /** Set by the parent when the last persist attempt failed. Rendered as a
+   *  visible, non-blocking banner; the sheet stays open and the user's
+   *  choices are untouched so Done/Ask me less can be tapped again as Retry. */
+  error?: string | null;
 }) {
   // Smart defaults, recomputed when the item set changes.
   const defaults = useMemo(() => {
@@ -59,17 +77,30 @@ export function PostWearSheet({
   const [choice, setChoice] = useState<Record<string, Disposition>>(defaults);
   useEffect(() => setChoice(defaults), [defaults]);
 
-  // One "shown" event per open, with counts only (no item identity).
+  // One "opened" event per open, with counts only (no item identity). Also
+  // fires ask_me_less_shown alongside it: the "Ask me less" affordance is
+  // always visible whenever this sheet is (its eligibility gate is that the
+  // sheet itself is still enabled — postwearEnabled upstream — there is no
+  // separate per-tap eligibility to compute).
   useEffect(() => {
     if (!open) return;
     const washSuggested = Object.values(defaults).filter((d) => d === "wash").length;
-    track("postwear_sheet_shown", { item_count: items.length, wash_suggested_count: washSuggested });
+    track("postwear_sheet_opened", { item_count: items.length, wash_suggested_count: washSuggested });
+    track("ask_me_less_shown", { item_count: items.length });
   }, [open, items.length, defaults]);
 
   if (!open) return null;
 
-  const setAll = (d: Disposition) => setChoice(Object.fromEntries(items.map((it) => [it.id, d])));
+  const setAll = (d: Disposition) => {
+    track("laundry_status_selected", { to: d, bulk: true, item_count: items.length });
+    setChoice(Object.fromEntries(items.map((it) => [it.id, d])));
+  };
+  const setOne = (id: string, d: Disposition) => {
+    track("laundry_status_selected", { to: d, bulk: false });
+    setChoice((c) => ({ ...c, [id]: d }));
+  };
   const washCount = Object.values(choice).filter((d) => d === "wash").length;
+  const doneLabel = saving ? "Saving…" : error ? "Try again" : washCount === 0 ? "All back in the wardrobe" : "Done";
 
   return (
     <Sheet
@@ -79,20 +110,34 @@ export function PostWearSheet({
       subtitle="Set it once and today's wash stays accurate. You can always change it later."
       footer={
         <div className="space-y-2 pb-1">
+          {error && (
+            <p role="alert" className="rounded-ww-sm border border-terracotta/30 bg-terracotta/[0.08] px-3 py-2 text-xs leading-snug text-terracotta">
+              {error}
+            </p>
+          )}
           <Button size="full" disabled={saving} onClick={() => onDone(choice)}>
-            {saving ? "Saving…" : washCount === 0 ? "All back in the wardrobe" : "Done"}
+            {doneLabel}
           </Button>
           <button
             type="button"
             disabled={saving}
             onClick={() => {
-              track("ask_me_less_activated", { source: "postwear_sheet" });
+              track("ask_me_less_enabled", { source: "postwear_sheet" });
               onAskMeLess(choice);
             }}
             className="w-full py-1.5 text-center text-xs text-graphite transition-colors hover:text-charcoal disabled:opacity-50"
           >
             Ask me less
           </button>
+          {error && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="w-full py-1 text-center text-xs text-mist transition-colors hover:text-graphite"
+            >
+              Skip for now
+            </button>
+          )}
         </div>
       }
     >
@@ -123,13 +168,13 @@ export function PostWearSheet({
             <div className="flex shrink-0 gap-1.5" role="group" aria-label={`Where does ${it.label} go?`}>
               <DispChip
                 active={choice[it.id] === "wardrobe"}
-                onClick={() => setChoice((c) => ({ ...c, [it.id]: "wardrobe" }))}
+                onClick={() => setOne(it.id, "wardrobe")}
                 icon={<Icon.Hanger className="h-3.5 w-3.5" />}
                 label="Wardrobe"
               />
               <DispChip
                 active={choice[it.id] === "wash"}
-                onClick={() => setChoice((c) => ({ ...c, [it.id]: "wash" }))}
+                onClick={() => setOne(it.id, "wash")}
                 icon={<Icon.Droplet className="h-3.5 w-3.5" />}
                 label="Wash"
               />

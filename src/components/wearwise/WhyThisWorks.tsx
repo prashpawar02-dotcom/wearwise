@@ -9,7 +9,10 @@ import { track } from "@/lib/analytics";
  * Renders the top-3 positive factor contributions, ONE plain-language line each,
  * exactly as produced by the scoring engine (strings map 1:1 to stored factors —
  * never free-generated here). Collapsed by default to respect the One-Screen
- * Rule; expands in place. Fires why_expanded once per expansion.
+ * Rule; expands in place. Fires the canonical why_this_works_opened event
+ * once per collapsed -> expanded transition. A separate expand event used
+ * to fire alongside this one; it was retired as a duplicate (see
+ * CHANGELOG.md, Phase 4B telemetry-dedup fix).
  */
 export function WhyThisWorks({
   lines,
@@ -29,7 +32,12 @@ export function WhyThisWorks({
         onClick={() => {
           const next = !open;
           setOpen(next);
-          if (next) track("why_expanded", { source, line_count: lines.length });
+          // Canonical event: why_this_works_opened, fired only on the
+          // collapsed -> expanded transition (single fire per expansion).
+          // The old duplicate expand event was retired — see CHANGELOG.md.
+          if (next) {
+            track("why_this_works_opened", { source, line_count: lines.length });
+          }
         }}
         className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
       >

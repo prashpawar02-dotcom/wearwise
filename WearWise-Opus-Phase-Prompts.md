@@ -225,3 +225,18 @@ Paste this reminder into every phase/hotfix prompt going forward.
 - Different accounts may correctly receive different recommendation content.
 - Release comparison checks structure and functionality, not identical outfits across accounts.
 - Each dashboard request may perform at most one write-producing recommendation action. A newly created or regenerated outfit must pass final availability validation before rendering. If that validation fails, the request fails closed rather than writing again.
+
+### Atomic Wear Confirmation (Phase 4C hotfix, 2026-07-11)
+- Recommendation worn state and item last-worn state are one atomic database operation.
+- Ownership, exact item-set matching, availability validation, row locking, idempotency, and writes occur inside one PostgreSQL transaction.
+- Concurrent confirmations produce one effective confirmation.
+- A duplicate request returns the original recorded result without replacing worn_at.
+- Optional laundry persistence is separate and must report failure visibly.
+
+### Onboarding v2 (Phase 4D, 2026-07-14, do not regress)
+- 6-step sequence only: Welcome, Basic context, Style preference (skippable), Wardrobe readiness (never blocks on missing footwear), First-recommendation readiness (never fabricates a completed outfit), Completion.
+- No long quiz, virtual try-on, body scanning, style psychology, social profile setup, paywall, or wardrobe-import automation in onboarding.
+- Every collected field must be proven used by the engine or product logic (ground-truth grep, not assumption) before it is added.
+- `profiles.onboarding_step` and `profiles.default_occasion` (migration 0025) are the only new persisted state; wardrobe readiness is always computed live, never persisted.
+- Onboarding is update-only against `profiles` — never inserts a row; `handle_new_user()` remains the sole row-creation path.
+- Already-onboarded users must never be routed back into the 6-step flow.

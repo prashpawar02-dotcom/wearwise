@@ -319,3 +319,17 @@ No phase or hotfix may be pushed merely because automated tests pass. Any user-f
 - Different accounts may correctly receive different recommendation content.
 - Release comparison checks structure and functionality, not identical outfits across accounts.
 - Each dashboard request may perform at most one write-producing recommendation action. A newly created or regenerated outfit must pass final availability validation before rendering. If that validation fails, the request fails closed rather than writing again.
+
+### Atomic Wear Confirmation (Phase 4C hotfix, 2026-07-11)
+- Recommendation worn state and item last-worn state are one atomic database operation.
+- Ownership, exact item-set matching, availability validation, row locking, idempotency, and writes occur inside one PostgreSQL transaction.
+- Concurrent confirmations produce one effective confirmation.
+- A duplicate request returns the original recorded result without replacing worn_at.
+- Optional laundry persistence is separate and must report failure visibly.
+
+### Onboarding v2 (Phase 4D, 2026-07-14)
+- Onboarding asks only questions that change recommendation quality or product operation; every collected field has a proven read site (engine, weather, or display) before it is added.
+- Required 6-step sequence: Welcome, Basic context (name + default occasion only — no gender, no unused demographics), Style preference (skippable), Wardrobe readiness (never blocks indefinitely on missing footwear), First-recommendation readiness (never fabricates a completed outfit), Completion.
+- State is `new | in_progress | wardrobe_incomplete | ready | completed | error`. Wardrobe-dependent states are always computed live from `wardrobe_items`, never persisted, so they cannot go stale. Only `onboarding_step` (resume position) and `default_occasion` are new persisted columns (migration 0025).
+- Onboarding never inserts a `profiles` row — only targeted updates, preserving `handle_new_user()` as the single row-creation owner. Resume never regresses progress and never loses previously saved answers.
+- Already-onboarded users (`profiles.onboarded = true`) are never routed back into the 6-step flow; the shared `/onboarding` route still serves them the original settings-edit form.

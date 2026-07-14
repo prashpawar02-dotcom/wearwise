@@ -2,12 +2,10 @@ import Link from "next/link";
 import { requireProfile } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { signWardrobePaths } from "@/lib/images";
-import { BottomNav } from "@/components/nav/bottom-nav";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
-import { OCCASIONS, type WardrobeItem, type DailyRecommendation } from "@/lib/types";
+import type { WardrobeItem, DailyRecommendation } from "@/lib/types";
 import { getWeatherContext, type WeatherContext } from "@/lib/weather";
 import { userLocalDate, prepareDailyDrop } from "@/lib/daily-drop";
 import { capState } from "@/lib/swap-caps";
@@ -17,37 +15,30 @@ import { logAppEvent } from "@/lib/events";
 import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
 import { PrepareDropButton } from "./prepare-drop-button";
 import { StreakFlame } from "@/components/wearwise/StreakFlame";
+import { ViewBeacon } from "@/components/wearwise/ViewBeacon";
+import { Screen } from "@/components/shell/Screen";
+import { ContextStrip } from "@/components/shell/ContextStrip";
 
 export const dynamic = "force-dynamic"; // per-user signed URLs; never cache
 
-const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
-
+/**
+ * Today (Phase 4B "Today v2") — the focused mobile Today screen, built on
+ * the Phase 4A shell primitives (Screen/ContextStrip). Required hierarchy:
+ * compact header -> context strip (date/weather/occasion) -> ONE Today's
+ * Drop hero -> primary action -> secondary actions -> Why This Works -> one
+ * supporting insight -> bottom nav (via Screen). No wardrobe analytics, no
+ * recent-requests list, no quick-stats grid here anymore — see IDEAS.md for
+ * where that content is meant to resurface (Wardrobe/Style Me, Phase 5/6).
+ */
 export default async function DashboardPage() {
   const { user, supabase, profile } = await requireProfile();
   if (!profile?.onboarded) redirect("/onboarding");
 
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-
   const [
     { count: itemCount },
-    { data: requests },
-    { data: worn },
-    { count: weeklyWorn },
-    { data: quietGemRows },
     { data: streakRow },
   ] = await Promise.all([
     supabase.from("wardrobe_items").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-    supabase.from("outfit_requests").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3),
-    supabase.from("worn_history").select("*").eq("user_id", user.id).order("worn_on", { ascending: false }).limit(1),
-    // Real signals for the daily insight card (owner-scoped, no faked data).
-    supabase.from("worn_history").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("worn_on", sevenDaysAgo),
-    supabase
-      .from("wardrobe_items")
-      .select("user_facing_name, category, last_worn_at")
-      .eq("user_id", user.id)
-      .not("last_worn_at", "is", null)
-      .order("last_worn_at", { ascending: true })
-      .limit(1),
     // Streak (Module C) — read-own via RLS; check-in happens client-side.
     supabase.from("streaks").select("current_count").eq("user_id", user.id).maybeSingle(),
   ]);
@@ -55,12 +46,6 @@ export default async function DashboardPage() {
   const items = itemCount ?? 0;
   const firstName = profile?.full_name?.split(" ")[0];
   const initial = (firstName ?? "W").charAt(0).toUpperCase();
-
-  const dailyInsight = buildDailyInsight({
-    quietGem: (quietGemRows?.[0] as QuietGemRow | undefined) ?? null,
-    weeklyWorn: weeklyWorn ?? 0,
-    itemsCount: items,
-  });
 
   // Honest weather context (null when no API key or no city).
   const weather = await getWeatherContext(profile?.city);
@@ -71,47 +56,59 @@ export default async function DashboardPage() {
   // attempt per request; fail closed to an honest constrained state otherwise.
   const todayDrop = await ensureTodayDrop(user.id, profile?.timezone ?? null, supabase, items);
 
+  // One state label for telemetry — never rendered, just makes today_viewed /
+  // today_constrained_viewed comparable across users (§ Phase 4B telemetry).
+  const state = !todayDrop.view
+    ? (todayDrop.needsWardrobe ? "needs_wardrobe" : "constrained")
+    : todayDrop.view.missingSlots.length > 0
+      ? "partial"
+      : "complete";
+
   return (
-    <main className="min-h-dvh pb-28">
-      <div className="animate-fade-in px-6 pt-10">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="ww-eyebrow mb-1">{dateLabel()}</p>
-            <h1 className="ww-display text-[1.7rem] text-charcoal">
-              {greeting()},{" "}
-              <em className="text-plum">{firstName ? `${firstName}.` : "there."}</em>
-            </h1>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <StreakFlame initialCount={streakRow?.current_count ?? 0} />
-            <span
-              aria-hidden="true"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-stone font-serif text-base text-charcoal"
-            >
-              {initial}
-            </span>
-          </div>
+    <Screen
+      contextStrip={
+        <ContextStrip>
+          <span className="ww-eyebrow text-graphite">{dateLabel()}</span>
+          <span aria-hidden="true" className="text-mist">·</span>
+          <WeatherChip weather={weather} />
+          {todayDrop.view?.occasionContext && (
+            <>
+              <span aria-hidden="true" className="text-mist">·</span>
+              <span className="truncate text-graphite">{capitalize(todayDrop.view.occasionContext)}</span>
+            </>
+          )}
+        </ContextStrip>
+      }
+    >
+      <ViewBeacon event="today_viewed" props={{ state, item_count: items }} />
+
+      {/* Compact header: greeting + streak + avatar, one row */}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <h1 className="ww-display text-[1.5rem] leading-tight text-charcoal">
+          {greeting()},{" "}
+          <em className="text-plum">{firstName ? `${firstName}.` : "there."}</em>
+        </h1>
+        <div className="flex shrink-0 items-center gap-2">
+          <StreakFlame initialCount={streakRow?.current_count ?? 0} />
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-stone font-serif text-sm text-charcoal"
+          >
+            {initial}
+          </span>
         </div>
-        <p className="mt-2 text-sm text-graphite">
-          {todayDrop.view
-            ? "Here's your outfit for today."
-            : items >= 10
-              ? "We're putting today's outfit together from your wardrobe."
-              : "Let's set up your wardrobe so your daily picks can begin."}
-        </p>
+      </div>
 
-        {/* Real weather context (honest fallback when unavailable) */}
-        <WeatherStrip weather={weather} />
-
-        {/* SINGLE PRIMARY RECOMMENDATION — Today's Drop, and only Today's Drop.
-            The legacy pick render path has been removed from the dashboard
-            so two heroes can never compete. When no valid drop can be formed we
-            show one honest constrained state (or the build-wardrobe onboarding) —
-            never the legacy pick card. */}
-        {todayDrop.view ? (
-          <DailyDropCard drop={todayDrop.view} postwearEnabled={profile?.postwear_sheet_enabled ?? true} />
-        ) : todayDrop.needsWardrobe ? (
+      {/* SINGLE PRIMARY RECOMMENDATION — Today's Drop, and only Today's Drop.
+          The legacy pick render path has been removed from the dashboard
+          so two heroes can never compete. When no valid drop can be formed we
+          show one honest constrained state (or the build-wardrobe onboarding) —
+          never the legacy pick card. */}
+      {todayDrop.view ? (
+        <DailyDropCard drop={todayDrop.view} postwearEnabled={profile?.postwear_sheet_enabled ?? true} />
+      ) : todayDrop.needsWardrobe ? (
+        <>
+          <ViewBeacon event="today_constrained_viewed" props={{ reason: "needs_wardrobe", item_count: items }} />
           <Card className="mt-5 border-plum/20 bg-plum/[0.05] p-5">
             <p className="font-medium text-charcoal">Build your wardrobe first</p>
             <p className="mt-1 text-sm text-graphite">
@@ -121,7 +118,10 @@ export default async function DashboardPage() {
               <Link href="/wardrobe/upload"><Icon.Plus className="h-4 w-4" /> Add clothes to get your first outfit</Link>
             </Button>
           </Card>
-        ) : (
+        </>
+      ) : (
+        <>
+          <ViewBeacon event="today_constrained_viewed" props={{ reason: "failed", item_count: items }} />
           <Card className="mt-5 border-champagne/30 bg-champagne/[0.08] p-4">
             <p className="font-medium text-charcoal">We couldn&apos;t prepare today&apos;s outfit</p>
             <p className="mt-1 text-sm text-graphite">
@@ -130,119 +130,27 @@ export default async function DashboardPage() {
             {/* Retry — regenerates from current available inventory (no legacy fallback). */}
             <PrepareDropButton compact />
           </Card>
-        )}
-
-        {/* Daily insight / surprise — safe, real signals only */}
-        <DailyInsight text={dailyInsight} />
-
-        {/* Quick stats */}
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          <Link href="/wardrobe">
-            <Card className="h-full p-5">
-              <Icon.Hanger className="h-5 w-5 text-plum" />
-              <span className="mt-1 block text-2xl font-semibold text-charcoal">{items}</span>
-              <span className="text-sm text-graphite">items in wardrobe</span>
-            </Card>
-          </Link>
-          <Link href="/occasion/new">
-            <Card className="h-full p-5">
-              <Icon.Sparkle className="h-5 w-5 text-champagne" />
-              <span className="mt-1 block text-2xl font-semibold text-charcoal">{requests?.length ?? 0}</span>
-              <span className="text-sm text-graphite">recent requests</span>
-            </Card>
-          </Link>
-        </div>
-
-        {/* Recent requests */}
-        {requests && requests.length > 0 && (
-          <section className="mt-8">
-            <h2 className="font-serif text-lg font-semibold text-charcoal">Recent requests</h2>
-            <div className="mt-3 space-y-2">
-              {requests.map((r) => (
-                <Link key={r.id} href={`/outfits/${r.id}`}>
-                  <Card className="flex items-center justify-between p-4">
-                    <div>
-                      <p className="font-medium text-charcoal">{occasionLabel(r.occasion)}</p>
-                      <p className="text-xs text-graphite">{new Date(r.created_at).toLocaleDateString()}</p>
-                    </div>
-                    <Chip tone={r.status === "fulfilled" ? "sage" : "champagne"} size="sm">
-                      {r.status === "fulfilled" ? "Ideas ready" : "Curating"}
-                    </Chip>
-                  </Card>
-                </Link>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {worn && worn.length > 0 && (
-          <p className="mt-6 text-sm text-graphite">
-            Last worn outfit logged on {new Date(worn[0].worn_on).toLocaleDateString()}.
-          </p>
-        )}
-      </div>
-      <BottomNav />
-    </main>
+        </>
+      )}
+    </Screen>
   );
 }
 
-// ===================== Daily insight (safe, real signals only) =====================
-
-type QuietGemRow = { user_facing_name: string | null; category: string | null; last_worn_at: string | null };
-
-function buildDailyInsight({
-  quietGem,
-  weeklyWorn,
-  itemsCount,
-}: {
-  quietGem: QuietGemRow | null;
-  weeklyWorn: number;
-  itemsCount: number;
-}): string {
-  if (quietGem?.last_worn_at) {
-    const days = Math.floor((Date.now() - new Date(quietGem.last_worn_at).getTime()) / 86_400_000);
-    const name = quietGem.user_facing_name ?? quietGem.category ?? "A quiet piece";
-    if (days >= 30) return `${name} has been quiet for ${days} days — a fresh option to bring back today.`;
-  }
-  if (weeklyWorn > 0) {
-    return `${weeklyWorn} ${weeklyWorn === 1 ? "morning" : "mornings"} sorted this week. WearWise keeps learning your taste.`;
-  }
-  if (itemsCount > 0) return "Fresh pick. WearWise learns more each time you mark an outfit worn.";
-  return "Add a few clothes and WearWise will start preparing your daily pick.";
-}
-
-function WeatherStrip({ weather }: { weather: WeatherContext | null }) {
+function WeatherChip({ weather }: { weather: WeatherContext | null }) {
   const rainy = weather?.category === "rainy" || weather?.category === "humid" || weather?.category === "windy";
   const WIcon = rainy ? Icon.Cloud : Icon.Sun;
   return (
-    <div className="mt-3 flex items-center gap-2 rounded-ww-md border border-hairline bg-bone px-3 py-2 text-sm">
-      <WIcon className={`h-4 w-4 shrink-0 ${weather ? "text-champagne" : "text-mist"}`} />
-      {weather ? (
-        <span className="min-w-0">
-          <span className="font-medium text-charcoal">{weather.tempC}° · {weather.summary}</span>
-          <span className="text-graphite"> — {weather.advice}</span>
-        </span>
-      ) : (
-        <span className="text-graphite">
-          Weather unavailable — WearWise will use your wardrobe and selected occasion.
-        </span>
-      )}
-    </div>
+    <span className="inline-flex min-w-0 items-center gap-1 truncate">
+      <WIcon className={`h-3.5 w-3.5 shrink-0 ${weather ? "text-champagne" : "text-mist"}`} />
+      <span className="truncate text-graphite">
+        {weather ? `${weather.tempC}° · ${weather.summary}` : "Weather unavailable"}
+      </span>
+    </span>
   );
 }
 
-function DailyInsight({ text }: { text: string }) {
-  return (
-    <div className="mt-5 flex items-start gap-3 rounded-ww-md border border-lavender/40 bg-lavender/[0.14] p-3.5">
-      <span aria-hidden="true" className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-bone">
-        <Icon.Sparkle className="h-3.5 w-3.5 text-plum" />
-      </span>
-      <div>
-        <p className="ww-eyebrow text-plum">Daily insight</p>
-        <p className="mt-0.5 text-sm leading-snug text-charcoal">{text}</p>
-      </div>
-    </div>
-  );
+function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 function greeting() {
@@ -402,6 +310,12 @@ async function ensureTodayDrop(
   };
   const hasUndo = Array.isArray(rec.pre_swap_item_ids) && rec.pre_swap_item_ids.length > 0;
 
+  // Phase 4B: honest missing-slot detection, derived purely from which
+  // canonical slots survived into the final item list (no engine change).
+  // The assembler can currently only omit Shoes and still succeed.
+  const presentSlots = new Set(items.map((i) => i.slot).filter(Boolean));
+  const missingSlots = presentSlots.has("Shoes") ? [] : ["Shoes"];
+
   const view: DailyDropView = {
     id: rec.id,
     status: rec.status,
@@ -414,6 +328,9 @@ async function ensureTodayDrop(
     whyThisWorks,
     cap,
     hasUndo,
+    missingSlots,
+    confidence: rec.confidence ?? null,
+    isDualPick: rec.is_dual_pick ?? false,
   };
   return { view };
 }

@@ -15,7 +15,7 @@ export default async function NewOccasionPage() {
       .from("wardrobe_items")
       .select("category, sub_category, user_facing_name, availability_status")
       .eq("user_id", user.id),
-    supabase.from("profiles").select("city").eq("id", user.id).single(),
+    supabase.from("profiles").select("city, default_occasion").eq("id", user.id).single(),
   ]);
 
   const rows = (data ?? []) as (RoleClassifiableItem & { availability_status?: string | null })[];
@@ -49,6 +49,7 @@ export default async function NewOccasionPage() {
             wearableCount={wearable.length}
             ready={ready}
             weather={weather}
+            defaultOccasion={profile?.default_occasion ?? null}
           />
         </div>
       </div>

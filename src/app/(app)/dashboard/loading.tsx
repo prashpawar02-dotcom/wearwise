@@ -1,41 +1,53 @@
 import { Skeleton } from "@/components/ui/Skeleton";
+import { Screen } from "@/components/shell/Screen";
+import { ContextStrip } from "@/components/shell/ContextStrip";
 
-/** Loading skeleton for Today — mirrors the header, weather strip, pick card,
- *  insight and stat tiles so content swaps in without layout shift. */
+/**
+ * Today loading skeleton (Phase 4B, state A). Mirrors the REAL Today
+ * hierarchy 1:1 — compact header, context strip (date/weather/occasion),
+ * one hero block, one action row, one Why This Works bar, one insight line —
+ * so content swaps in with no layout shift and nothing here ever reads as a
+ * real recommendation (no copy, no item names, pure placeholder blocks).
+ */
 export default function DashboardLoading() {
   return (
-    <main className="min-h-dvh px-6 pt-10 pb-28" aria-busy="true" aria-label="Loading your day">
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-2">
-          <Skeleton className="h-3 w-32" />
-          <Skeleton className="h-8 w-52" />
+    <Screen
+      contextStrip={
+        <ContextStrip>
+          <Skeleton className="h-4 w-24 rounded-full" />
+          <Skeleton className="h-4 w-28 rounded-full" />
+          <Skeleton className="h-4 w-16 rounded-full" />
+        </ContextStrip>
+      }
+    >
+      <div aria-busy="true" aria-label="Loading today's outfit" className="pt-1">
+        {/* Compact header: greeting + avatar */}
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-7 w-44" />
+          <Skeleton className="h-9 w-9 shrink-0 rounded-full" />
         </div>
-        <Skeleton className="h-10 w-10 rounded-full" />
+
+        {/* Hero */}
+        <Skeleton className="mt-5 h-64 w-full rounded-ww-lg" />
+
+        {/* Primary action */}
+        <Skeleton className="mt-4 h-12 w-full rounded-full" />
+
+        {/* Secondary actions */}
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <Skeleton className="h-9 rounded-full" />
+          <Skeleton className="h-9 rounded-full" />
+        </div>
+        <div className="mt-2 flex justify-center">
+          <Skeleton className="h-7 w-24 rounded-full" />
+        </div>
+
+        {/* Why This Works */}
+        <Skeleton className="mt-3 h-10 w-full rounded-ww-md" />
+
+        {/* Supporting insight */}
+        <Skeleton className="mt-3 h-10 w-full rounded-ww-md" />
       </div>
-
-      <Skeleton className="mt-3 h-4 w-64" />
-
-      {/* Weather strip */}
-      <Skeleton className="mt-3 h-11 w-full rounded-ww-md" />
-
-      {/* Context chips */}
-      <div className="mt-4 flex gap-2">
-        <Skeleton className="h-7 w-20 rounded-full" />
-        <Skeleton className="h-7 w-24 rounded-full" />
-        <Skeleton className="h-7 w-16 rounded-full" />
-      </div>
-
-      {/* Best Pick card */}
-      <Skeleton className="mt-5 h-72 w-full rounded-ww-lg" />
-
-      {/* Daily insight */}
-      <Skeleton className="mt-5 h-16 w-full rounded-ww-md" />
-
-      {/* Stats */}
-      <div className="mt-6 grid grid-cols-2 gap-3">
-        <Skeleton className="h-24 rounded-ww-lg" />
-        <Skeleton className="h-24 rounded-ww-lg" />
-      </div>
-    </main>
+    </Screen>
   );
 }

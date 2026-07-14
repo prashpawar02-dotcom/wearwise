@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "preflight": "tsx --env-file=.env.local scripts/check-local-env.ts",
     "audit:invalid-drafts": "tsx --env-file=.env.local scripts/audit-invalid-outfit-drafts.ts",
-    "test:engine": "node scripts/run-engine-tests.mjs"
+    "test:engine": "node scripts/run-engine-tests.mjs",
+    "test": "node scripts/run-engine-tests.mjs",
+    "test:atomic-wear:local": "node scripts/test-atomic-wear-local.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
@@ -28,6 +30,7 @@
     "@types/react": "^18.3.8",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
+    "pg": "^8.13.1",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "tailwindcss-animate": "^1.0.7",

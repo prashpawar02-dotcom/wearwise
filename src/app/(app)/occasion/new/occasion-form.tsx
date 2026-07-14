@@ -59,11 +59,20 @@ export function OccasionForm({
   wearableCount,
   ready,
   weather,
+  defaultOccasion,
 }: {
   itemCount: number;
   wearableCount: number;
   ready: WardrobeReady;
   weather: WeatherContext | null;
+  /**
+   * From profiles.default_occasion (migration 0025, Phase 4D onboarding).
+   * One of STYLE_OCCASIONS' own `key` values, or null if the user never set
+   * one / skipped that step. Only changes what "Use today's default"
+   * resolves to — never affects the occasion CARDS above, which the user
+   * always picks explicitly.
+   */
+  defaultOccasion?: string | null;
 }) {
   const router = useRouter();
   const [selectedKey, setSelectedKey] = useState<string>("");
@@ -145,7 +154,19 @@ export function OccasionForm({
   }
 
   function submitDefault() {
-    // Honest, calm default: work on weekdays, casual on weekends.
+    // Prefer the user's own stated default (profiles.default_occasion, set
+    // during onboarding's "What do you dress for most?" step — migration
+    // 0025). Only used if it still matches a real STYLE_OCCASIONS key today;
+    // if not (unset, skipped, or a stale value), fails soft to the original
+    // honest, calm heuristic: work on weekdays, casual on weekends. Never
+    // throws, never blocks the button either way.
+    const preferred = defaultOccasion
+      ? STYLE_OCCASIONS.find((o) => o.key === defaultOccasion)
+      : undefined;
+    if (preferred) {
+      void submitWith(preferred.occasion, preferred.tag ?? null);
+      return;
+    }
     const day = new Date().getDay();
     const weekend = day === 0 || day === 6;
     void submitWith(weekend ? "casual" : "work", null);

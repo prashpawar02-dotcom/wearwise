@@ -75,12 +75,16 @@ export function SwapSheet({
 
   // Fresh slot picker each time the sheet opens. NEVER auto-fetches candidates
   // and NEVER triggers another-option — this sheet is single-item swap only.
+  // No telemetry here: the canonical "opened" event (swap_opened) is fired
+  // once, at intent time, by DailyDropCard's openSwap() before this sheet
+  // even mounts. This effect used to also fire its own "opened" event,
+  // duplicating that same user gesture — retired (see CHANGELOG.md, Phase
+  // 4B telemetry-dedup fix, for the old event name).
   useEffect(() => {
     if (!open) return;
     setView("slots"); setBusy(false); setCap(initialCap); setSelected(null);
     setCandidates([]); setSlotName(null); setMessage(null); setReason(null);
     setWhy([]); setCapMsg(null); setAck(null); setHasUndo(false);
-    track("swap_sheet_opened", { item_count: items.length });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -103,10 +107,13 @@ export function SwapSheet({
   }
 
   // Step 1 -> 2: a slot was chosen; fetch replacements for THAT slot only.
+  // Canonical event: swap_requested, carrying the selected slot — represents
+  // both "the user picked a slot" and "the candidate request started" as one
+  // moment. A separate slot-selection event used to fire alongside this one;
+  // it was retired as a duplicate (see CHANGELOG.md, Phase 4B telemetry-dedup fix).
   async function loadCandidates(item: SwapSheetItem) {
     setBusy(true); setSelected(item); setMessage(null);
-    track("swap_slot_selected", { slot: item.slot ?? "item" });
-    track("swap_requested", {});
+    track("swap_requested", { slot: item.slot ?? "item" });
     try {
       const res = await fetch(
         `/api/daily-drop/swap-candidates?recommendationId=${encodeURIComponent(recommendationId)}&replaceItemId=${encodeURIComponent(item.id)}`,

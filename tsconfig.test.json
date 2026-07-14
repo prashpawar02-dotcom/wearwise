@@ -17,6 +17,8 @@
     "src/lib/outfit-validity.ts",
     "src/lib/laundry.ts",
     "src/lib/swap-caps.ts",
+    "src/lib/wardrobe.ts",
+    "src/lib/onboarding.ts",
     "src/lib/engine/types.ts",
     "src/lib/engine/config.ts",
     "src/lib/engine/classify.ts",
@@ -26,12 +28,20 @@
     "src/lib/engine/templates.ts",
     "src/lib/engine/recommend.ts",
     "src/lib/engine/swap.ts",
+    "src/lib/shell/tabs.ts",
+    "src/lib/shell/scroll-audit.ts",
     "tests/engine/fixtures.ts",
     "tests/engine/golden.test.ts",
     "tests/engine/laundry.test.ts",
     "tests/engine/swap.test.ts",
     "tests/engine/validity.test.ts",
     "tests/engine/swap-wiring.test.ts",
-    "tests/engine/dashboard-wiring.test.ts"
+    "tests/engine/dashboard-wiring.test.ts",
+    "tests/engine/shell.test.ts",
+    "tests/engine/today-v2.test.ts",
+    "tests/engine/postwear-wiring.test.ts",
+    "tests/engine/atomic-wear-confirmation.test.ts",
+    "tests/engine/table-privileges.test.ts",
+    "tests/engine/onboarding.test.ts"
   ]
 }
