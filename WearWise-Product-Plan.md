@@ -904,3 +904,17 @@ Packing list · calendar integration · one-time wardrobe analysis (if fake-door
 - Different accounts may correctly receive different recommendation content.
 - Release comparison checks structure and functionality, not identical outfits across accounts.
 - Each dashboard request may perform at most one write-producing recommendation action. A newly created or regenerated outfit must pass final availability validation before rendering. If that validation fails, the request fails closed rather than writing again.
+
+### Atomic Wear Confirmation (Phase 4C hotfix, 2026-07-11)
+- Recommendation worn state and item last-worn state are one atomic database operation.
+- Ownership, exact item-set matching, availability validation, row locking, idempotency, and writes occur inside one PostgreSQL transaction.
+- Concurrent confirmations produce one effective confirmation.
+- A duplicate request returns the original recorded result without replacing worn_at.
+- Optional laundry persistence is separate and must report failure visibly.
+
+### Onboarding v2 (Phase 4D, 2026-07-14)
+- Onboarding collects only the minimum information needed to produce a useful recommendation and gets a new user to a valid first Today outfit quickly.
+- Required 6-step sequence: Welcome, Basic context (name + default occasion only), Style preference (skippable), Wardrobe readiness (never blocks indefinitely on missing footwear, stays honest about partial recommendations), First-recommendation readiness (never fabricates a completed outfit), Completion.
+- Every collected field must have a documented, proven purpose in either the recommendation engine or product operation; fields with no proven use are not collected.
+- Partial completion is always recoverable — resume never loses prior answers and never creates a duplicate profile row.
+- Existing onboarded users are never forced through onboarding again.

@@ -27,8 +27,15 @@ ok("sheet NEVER calls the full-outfit route", !sheet.includes("/api/daily-drop/a
 ok("sheet has NO mood route", !sheet.includes("mood-swap"));
 ok("sheet has NO auto-run initialAction", !sheet.includes("initialAction"));
 ok("sheet only fetches candidates from loadCandidates (not on open)",
-  /useEffect\([\s\S]*?track\("swap_sheet_opened"/.test(sheet) &&
+  // Anchor on the slot-picker reset (setView("slots")) rather than a
+  // telemetry call — the mount effect intentionally emits NO event at all
+  // as of the Phase 4B telemetry-dedup fix (swap_sheet_opened retired; the
+  // canonical swap_opened event fires once, at intent time, from
+  // DailyDropCard's openSwap(), before this sheet even mounts).
+  /useEffect\([\s\S]*?setView\("slots"\)/.test(sheet) &&
   !/useEffect\([\s\S]*?fetch\(/.test(sheet.slice(sheet.indexOf("useEffect"), sheet.indexOf("if (!open) return null"))));
+ok("sheet mount effect fires no telemetry (swap_sheet_opened retired)",
+  !/useEffect\([\s\S]*?track\(/.test(sheet.slice(sheet.indexOf("useEffect"), sheet.indexOf("if (!open) return null"))));
 ok("sheet result row has Keep it / Try another / Put back",
   sheet.includes(">Keep it<") && sheet.includes(">Try another<") && sheet.includes(">Put back<"));
 

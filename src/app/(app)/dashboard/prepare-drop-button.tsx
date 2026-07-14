@@ -15,7 +15,12 @@ import { track } from "@/lib/analytics";
  * exists/failed-with-row result we refresh so the dashboard re-reads and shows
  * the right card/fallback; otherwise we show a calm message (never a raw error).
  *
- * `compact` renders a small retry button for use inside the failed fallback.
+ * `compact` renders a small retry button for use inside the failed fallback —
+ * this is Today's "D. Constrained wardrobe" recovery action (Phase 4B). It
+ * fires the canonical `today_retry_tapped` intent event once (the old
+ * duplicate prepare-click event was retired — see CHANGELOG.md, Phase 4B
+ * telemetry-dedup fix) and `daily_drop_prepare_result` as the distinct
+ * outcome event once the response comes back.
  */
 type PrepareResponse = {
   status?: string;
@@ -48,7 +53,11 @@ export function PrepareDropButton({ compact = false }: { compact?: boolean }) {
     setLoading(true);
     setMessage(null);
     setTip(null);
-    track("daily_drop_prepare_clicked", { source: "dashboard_beta_button" });
+    // Canonical retry-intent event: today_retry_tapped (single fire). The
+    // old duplicate prepare-click event was retired — see CHANGELOG.md
+    // (Phase 4B telemetry-dedup fix). daily_drop_prepare_result (below,
+    // after the response) is the distinct outcome event and stays.
+    track("today_retry_tapped", { source: "constrained" });
     try {
       const res = await fetch("/api/daily-drop/prepare", {
         method: "POST",

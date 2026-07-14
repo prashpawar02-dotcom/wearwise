@@ -30,10 +30,20 @@ declare
   ids   uuid[];
   r_id  uuid;
 begin
-  select id into uid from auth.users where lower(email) = lower(target_email);
-  if uid is null then
-    raise exception 'No auth user found for %. Sign in to the app once first, then set target_email.', target_email;
-  end if;
+  if target_email = 'REPLACE_WITH_YOUR_LOGIN_EMAIL' then
+  raise notice 'Skipping optional user-specific seed because target_email is still the placeholder.';
+  return;
+end if;
+
+select id
+into uid
+from auth.users
+where lower(email) = lower(target_email);
+
+if uid is null then
+  raise notice 'Skipping optional user-specific seed because no local auth user exists for %.', target_email;
+  return;
+end if;
 
   -- ---- profile -------------------------------------------------------
   insert into public.profiles (id, full_name, age_range, city, style_preferences, is_admin, onboarded)
