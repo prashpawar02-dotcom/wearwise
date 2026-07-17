@@ -1,33 +1,30 @@
 // =====================================================================
-// WearWise — Swap server helpers (Phase 3)
+// WearWise — Swap server helpers (Phase 3, Phase 4 canonical-context rewire)
 // Shared, session-scoped building blocks for the swap / mood / option / undo
-// routes. Keeps every route consistent with the GENERATION-TIME precompute:
-// the same context construction (defaultContext + weather, EMPTY_PREFERENCES)
-// is reused so a candidate that was precomputed stays valid on apply, and
-// server-side re-validation stays fail-closed.
-//
-// NOTE (Phase 4): swap validation intentionally mirrors the heuristic base
-// outfit's context (no per-user learned prefs yet). When Phase 4 rewires
-// selection onto recommendOutfits(), swap context should adopt the same
-// per-user EngineContext. Logged in IDEAS.md.
+// routes. LOCKED DECISION 4: every recommendation-writing path now builds the
+// SAME authenticated EngineContext (loadEngineContext) that Admin QA uses — no
+// weaker defaultContext/EMPTY_PREFERENCES path remains.
 // =====================================================================
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getWeatherContext } from "@/lib/weather";
-import { defaultContext } from "@/lib/outfit-engine";
+import { loadEngineContext } from "@/lib/engine/loadContext";
+import { resolveEngineOccasion } from "@/lib/engine/occasion";
 import { explainSelectedOutfit } from "@/lib/engine/recommend";
 import type { EngineContext, EngineOccasion } from "@/lib/engine/types";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 import { capState, type CapState } from "@/lib/swap-caps";
 
-/** Map a stored occasion_context label to the engine occasion. */
-export function occasionFromContext(occasionContext: string | null): EngineOccasion {
-  return occasionContext === "traditional" ? "ethnic" : "casual";
+/** Map a stored occasion_context label to the engine occasion (canonical). */
+export function occasionFromContext(
+  occasionContext: string | null,
+  defaultOccasion?: string | null,
+): EngineOccasion {
+  return resolveEngineOccasion(defaultOccasion, occasionContext);
 }
 
 /**
  * 1-based ordinal of the user's drop-day (a "session" ≈ a daily drop). One row
- * exists per user per local date, so the row count is the session number. Never
- * throws; falls back to 1 (exempt) on any read error.
+ * exists per user per local date, so the row count is the session number.
  */
 export async function sessionOrdinal(supabase: SupabaseClient, userId: string): Promise<number> {
   try {
@@ -56,11 +53,12 @@ export async function dropCapState(
 }
 
 /**
- * Build the swap EngineContext — IDENTICAL construction to the generation-time
- * precompute (defaultContext + live weather). Weather only ever tightens the
- * hard filters, so a precomputed-valid candidate remains valid.
+ * Build the swap EngineContext — the SAME authenticated context Admin QA and
+ * Today generation use (loadEngineContext: per-user prefs + DB config + live
+ * weather), under the canonically-resolved occasion.
  */
 export async function buildSwapContext(
+  supabase: SupabaseClient,
   profile: Profile | null,
   rec: DailyRecommendation,
 ): Promise<EngineContext> {
@@ -70,10 +68,13 @@ export async function buildSwapContext(
     const w = await getWeatherContext(profile.city);
     if (w) { tempC = w.tempC; isRaining = w.category === "rainy"; }
   }
-  return {
-    ...defaultContext(occasionFromContext(rec.occasion_context)),
+  const occasion = resolveEngineOccasion(profile?.default_occasion, rec.occasion_context);
+  return loadEngineContext({
+    supabase,
+    userId: rec.user_id,
+    occasion,
     weather: { tempC, isRaining },
-  };
+  });
 }
 
 /** Re-derive persistable explanation for a (new) outfit — keeps Why-This-Works 1:1. */

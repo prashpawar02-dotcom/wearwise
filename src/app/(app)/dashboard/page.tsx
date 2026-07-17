@@ -10,6 +10,7 @@ import { getWeatherContext, type WeatherContext } from "@/lib/weather";
 import { userLocalDate, prepareDailyDrop } from "@/lib/daily-drop";
 import { capState } from "@/lib/swap-caps";
 import { validateOutfitCurrent } from "@/lib/outfit-validity";
+import { computeInventoryFingerprint } from "@/lib/recommendation/fingerprint";
 import { swapSlot, slotLabel } from "@/lib/engine/swap";
 import { logAppEvent } from "@/lib/events";
 import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
@@ -55,14 +56,18 @@ export default async function DashboardPage() {
   // opt-in. It never falls back to the legacy pick card. One create/regenerate
   // attempt per request; fail closed to an honest constrained state otherwise.
   const todayDrop = await ensureTodayDrop(user.id, profile?.timezone ?? null, supabase, items);
+  // A genuinely absent profile routes to onboarding (never a wardrobe dead-end).
+  if (todayDrop.setupRequired) redirect("/onboarding");
 
   // One state label for telemetry — never rendered, just makes today_viewed /
   // today_constrained_viewed comparable across users (§ Phase 4B telemetry).
-  const state = !todayDrop.view
-    ? (todayDrop.needsWardrobe ? "needs_wardrobe" : "constrained")
-    : todayDrop.view.missingSlots.length > 0
-      ? "partial"
-      : "complete";
+  const state = todayDrop.technical
+    ? "technical"
+    : !todayDrop.view
+      ? (todayDrop.needsWardrobe ? "needs_wardrobe" : "constrained")
+      : todayDrop.view.missingSlots.length > 0
+        ? "partial"
+        : "complete";
 
   return (
     <Screen
@@ -117,6 +122,17 @@ export default async function DashboardPage() {
             <Button asChild className="mt-4" size="full">
               <Link href="/wardrobe/upload"><Icon.Plus className="h-4 w-4" /> Add clothes to get your first outfit</Link>
             </Button>
+          </Card>
+        </>
+      ) : todayDrop.technical ? (
+        <>
+          <ViewBeacon event="today_constrained_viewed" props={{ reason: "technical", item_count: items }} />
+          <Card className="mt-5 border-champagne/30 bg-champagne/[0.08] p-4">
+            <p className="font-medium text-charcoal">Something went wrong on our side</p>
+            <p className="mt-1 text-sm text-graphite">
+              We couldn&apos;t load your profile just now — this is a temporary problem, not your wardrobe. Please try again in a moment.
+            </p>
+            <PrepareDropButton compact />
           </Card>
         </>
       ) : (
@@ -191,14 +207,22 @@ async function ensureTodayDrop(
   timezone: string | null,
   supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
   itemCount: number,
-): Promise<{ view?: DailyDropView; failed?: string; needsWardrobe?: boolean }> {
+): Promise<{ view?: DailyDropView; failed?: string; needsWardrobe?: boolean; technical?: boolean; setupRequired?: boolean }> {
   const localDate = userLocalDate(timezone);
-  const { data } = await supabase
-    .from("daily_recommendations")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("local_date", localDate)
-    .maybeSingle();
+  const [{ data }, { data: invRows }] = await Promise.all([
+    supabase
+      .from("daily_recommendations")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("local_date", localDate)
+      .maybeSingle(),
+    // Minimal columns for the canonical inventory fingerprint (locked decision 5).
+    supabase
+      .from("wardrobe_items")
+      .select("id, availability_status, category, sub_category, cultural_tag, formality, ai_tag_status, occasion_tags")
+      .eq("user_id", userId),
+  ]);
+  const currentFingerprint = computeInventoryFingerprint((invRows ?? []) as WardrobeItem[]);
 
   // ---------------------------------------------------------------------------
   // SINGLE-WRITE CONTRACT (Phase 3 hotfix 4): a dashboard request performs AT
@@ -214,24 +238,38 @@ async function ensureTodayDrop(
   let writeAttempted = false;
 
   if (!rec) {
-    // MISSING ROW -> exactly one create (ignoreOptIn bypasses ONLY the
-    // notification opt-in; it never enables or sends notifications). Idempotent:
-    // prepareDailyDrop upserts on (user_id, local_date), so concurrent first
-    // loads resolve to a single row.
+    // MISSING ROW -> exactly one create. Idempotent upsert on (user_id, local_date).
     writeAttempted = true;
     const created = await prepareDailyDrop(userId, { supabase, ignoreOptIn: true });
+    if (created.status === "error") return { technical: true };        // retryable, NOT wardrobe
+    if (created.status === "setup_required") return { setupRequired: true };
     if (!created.recommendation) return constrainedResult(created.reason, itemCount);
     rec = created.recommendation;
-  } else if (rec.status !== "failed") {
-    // EXISTING ROW -> regenerate ONCE, and ONLY if the stored outfit is already
-    // stale. Regeneration is reachable only on this pre-existing branch, so a
-    // create and a regenerate can never both run in the same request.
+  } else {
+    // FRESHNESS POLICY (locked decision 5) — regenerate AT MOST once when:
+    //  A) a selected item is no longer valid (availability/hard-filter); OR
+    //  B) the stored result is partial/constrained/failed AND the canonical
+    //     inventory fingerprint changed (covers upload/restore/retag/delete for
+    //     EVERY slot — no footwear special case); OR
+    //  (migration) the row predates authoritative metadata (unknown status).
+    // A COMPLETE row whose selected items all remain valid is NEVER replaced just
+    // because an unrelated item was added (policy C — no churn).
     const existingIds = rec.selected_item_ids ?? [];
-    const existingValidity = await validateOutfitCurrent(supabase, userId, existingIds);
-    if (existingIds.length > 0 && !existingValidity.valid && !writeAttempted) {
+    let selectedInvalid = false;
+    if (rec.status !== "failed" && existingIds.length > 0) {
+      const v = await validateOutfitCurrent(supabase, userId, existingIds);
+      selectedInvalid = !v.valid;
+    }
+    const authorityUnknown = rec.outfit_status == null;
+    const nonComplete =
+      rec.status === "failed" || rec.outfit_status === "partial" || rec.outfit_status === "constrained";
+    const staleByFingerprint = nonComplete && rec.inventory_fingerprint !== currentFingerprint;
+
+    if (!writeAttempted && (selectedInvalid || authorityUnknown || staleByFingerprint)) {
       writeAttempted = true;
       await logAppEvent("stale_outfit_blocked", userId, {
-        surface: "daily_drop", reason: existingValidity.invalid[0]?.reason ?? "stale",
+        surface: "daily_drop",
+        reason: selectedInvalid ? "selected_invalid" : staleByFingerprint ? "inventory_changed" : "authority_unknown",
       });
       const regenerated = await prepareDailyDrop(userId, { force: true, supabase });
       if (regenerated.recommendation) { rec = regenerated.recommendation; source = "regenerated"; }
@@ -310,11 +348,13 @@ async function ensureTodayDrop(
   };
   const hasUndo = Array.isArray(rec.pre_swap_item_ids) && rec.pre_swap_item_ids.length > 0;
 
-  // Phase 4B: honest missing-slot detection, derived purely from which
-  // canonical slots survived into the final item list (no engine change).
-  // The assembler can currently only omit Shoes and still succeed.
-  const presentSlots = new Set(items.map((i) => i.slot).filter(Boolean));
-  const missingSlots = presentSlots.has("Shoes") ? [] : ["Shoes"];
+  // Phase 4: authoritative completeness comes from the engine-persisted columns
+  // (locked decision 7), NEVER inferred from the item list. Slot labels for the
+  // UI badge map footwear -> "Shoes".
+  const missingSlots = (rec.missing_slots ?? []).map((slot) =>
+    slot === "footwear" ? "Shoes" : slot.charAt(0).toUpperCase() + slot.slice(1)
+  );
+  const partialReason = rec.partial_reason ?? null;
 
   const view: DailyDropView = {
     id: rec.id,
@@ -329,6 +369,7 @@ async function ensureTodayDrop(
     cap,
     hasUndo,
     missingSlots,
+    partialReason,
     confidence: rec.confidence ?? null,
     isDualPick: rec.is_dual_pick ?? false,
   };

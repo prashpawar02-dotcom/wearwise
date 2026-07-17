@@ -104,14 +104,14 @@ function ok(name: string, cond: boolean, extra = "") {
 // =====================================================================
 // SECTION B — structural wiring checks
 // =====================================================================
-const FLOW = readFileSync("src/app/(app)/onboarding/onboarding-flow.tsx", "utf8");
-const PAGE = readFileSync("src/app/(app)/onboarding/page.tsx", "utf8");
-const DASHBOARD = readFileSync("src/app/(app)/dashboard/page.tsx", "utf8");
-const PLAN = readFileSync("src/app/(app)/plan/page.tsx", "utf8");
-const PROFILE_PAGE = readFileSync("src/app/(app)/profile/page.tsx", "utf8");
-const OCCASION_FORM = readFileSync("src/app/(app)/occasion/new/occasion-form.tsx", "utf8");
-const DAILY_DROP = readFileSync("src/lib/daily-drop.ts", "utf8");
-const SCORING = readFileSync("src/lib/engine/scoring.ts", "utf8");
+const FLOW = readFileSync("src/app/(app)/onboarding/onboarding-flow.tsx", "utf8").replace(/\r\n/g, "\n");
+const PAGE = readFileSync("src/app/(app)/onboarding/page.tsx", "utf8").replace(/\r\n/g, "\n");
+const DASHBOARD = readFileSync("src/app/(app)/dashboard/page.tsx", "utf8").replace(/\r\n/g, "\n");
+const PLAN = readFileSync("src/app/(app)/plan/page.tsx", "utf8").replace(/\r\n/g, "\n");
+const PROFILE_PAGE = readFileSync("src/app/(app)/profile/page.tsx", "utf8").replace(/\r\n/g, "\n");
+const OCCASION_FORM = readFileSync("src/app/(app)/occasion/new/occasion-form.tsx", "utf8").replace(/\r\n/g, "\n");
+const DAILY_DROP = readFileSync("src/lib/daily-drop.ts", "utf8").replace(/\r\n/g, "\n");
+const SCORING = readFileSync("src/lib/engine/scoring.ts", "utf8").replace(/\r\n/g, "\n");
 
 // ---- Test 1 (routing half): new user enters the new flow ----
 {

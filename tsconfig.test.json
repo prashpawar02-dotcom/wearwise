@@ -27,6 +27,12 @@
     "src/lib/engine/scoring.ts",
     "src/lib/engine/templates.ts",
     "src/lib/engine/recommend.ts",
+    "src/lib/engine/footwear.ts",
+    "src/lib/engine/occasion.ts",
+    "src/lib/recommendation/fingerprint.ts",
+    "src/lib/recommendation/profile-guard.ts",
+    "src/lib/time/timezone.ts",
+    "src/lib/streaks-core.ts",
     "src/lib/engine/swap.ts",
     "src/lib/shell/tabs.ts",
     "src/lib/shell/scroll-audit.ts",
@@ -42,6 +48,12 @@
     "tests/engine/postwear-wiring.test.ts",
     "tests/engine/atomic-wear-confirmation.test.ts",
     "tests/engine/table-privileges.test.ts",
-    "tests/engine/onboarding.test.ts"
+    "tests/engine/onboarding.test.ts",
+    "tests/engine/recommendation-authority.test.ts",
+    "tests/engine/csp.test.ts",
+    "tests/engine/profile-timezone.test.ts",
+    "tests/engine/streaks-core.test.ts",
+    "tests/engine/streak-privileges.test.ts",
+    "tests/engine/outfit-request-privileges.test.ts"
   ]
 }

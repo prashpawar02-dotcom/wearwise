@@ -16,12 +16,14 @@
 // =====================================================================
 import type { WardrobeItem } from "@/lib/types";
 import type {
-  EngineContext, MissingSlot, PartialReason, RecommendationResult, ScoredOutfit,
+  EngineContext, EvaluatedOutfit, MissingSlot, OutfitStatus, PartialReason,
+  PartialReasonCode, RecommendationResult, ScoredOutfit,
 } from "@/lib/engine/types";
 import { eligiblePool, candidateRejection } from "@/lib/engine/filters";
 import { buildCandidates } from "@/lib/engine/templates";
 import { scoreOutfit } from "@/lib/engine/scoring";
 import { engineRole } from "@/lib/engine/classify";
+import { footwearPartialReason } from "@/lib/engine/footwear";
 import { constrainedInventoryNote } from "@/lib/laundry";
 
 const CORE_ROLES = new Set(["upper", "ethnic_upper", "bottom", "one_piece", "saree", "outerwear"]);
@@ -112,7 +114,7 @@ export function recommendOutfits(
     return {
       hero: null, backups: [], dualPick: false,
       failReason: pool.length === 0 ? "no_wearable_items" : "no_valid_outfit",
-      outfitStatus: "complete", missingSlots: [], diagnostics,
+      outfitStatus: "complete", missingSlots: [], partialReasonCode: null, diagnostics,
     };
   }
 
@@ -168,6 +170,8 @@ export function recommendOutfits(
     outfitStatus: usingPartial ? "partial" : "complete",
     missingSlots: usingPartial ? ["footwear"] : [],
     partialReason,
+    // Fine-grained honest reason for storage/UI (computed from the FULL wardrobe).
+    partialReasonCode: usingPartial ? footwearPartialReason(items, ctx) : null,
     // Honest note when today's clean options were the best available under
     // laundry pressure (Phase 2). Computed from the FULL wardrobe (incl. in_wash).
     constrainedNote: constrainedInventoryNote(items, ctx.occasion),
@@ -197,5 +201,36 @@ export function explainSelectedOutfit(items: WardrobeItem[], ctx: EngineContext)
     confidence,
     is_dual_pick: confidence < ctx.config.thresholds.confidence_dual_pick,
     factor_breakdown: { factors: s.factors, penalties: s.penalties, whyThisWorks: s.whyThisWorks, total: s.total },
+  };
+}
+
+/**
+ * LOCKED DECISION 7 — the single engine-level evaluator for an ALREADY-selected
+ * outfit (swap / mood / put-back / another-option). Uses the SAME engineRole,
+ * partial-state logic (footwearPartialReason), and scoring/explanation as fresh
+ * generation. `inventory` is the user's full wardrobe (needed to decide WHY a
+ * slot is missing). It never re-invents partial reasons elsewhere.
+ */
+export function evaluateSelectedOutfit(
+  items: WardrobeItem[],
+  ctx: EngineContext,
+  inventory: WardrobeItem[],
+): EvaluatedOutfit {
+  const hasShoe = items.some((i) => engineRole(i) === "footwear");
+  const outfit_status: OutfitStatus = hasShoe ? "complete" : "partial";
+  const missing_slots: MissingSlot[] = hasShoe ? [] : ["footwear"];
+  const partial_reason: PartialReasonCode | null = hasShoe ? null : footwearPartialReason(inventory, ctx);
+
+  const s = scoreOutfit(items, ctx);
+  const confidence = clamp01(0.6 * s.norm + 0.4 * s.tagCompleteness);
+  const factor_breakdown = { factors: s.factors, penalties: s.penalties, whyThisWorks: s.whyThisWorks, total: s.total };
+  return {
+    outfit_status,
+    missing_slots,
+    partial_reason,
+    confidence,
+    is_dual_pick: confidence < ctx.config.thresholds.confidence_dual_pick,
+    factor_breakdown,
+    whyThisWorks: s.whyThisWorks,
   };
 }

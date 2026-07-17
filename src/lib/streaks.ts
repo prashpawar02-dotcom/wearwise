@@ -1,23 +1,19 @@
 // =====================================================================
 // WearWise — streak engine (Module C). SERVER-ONLY: all writes go through
-// the service-role client (streaks has NO client write policy), so a
-// hostile client can never fake a streak. Idempotent per local date.
+// the service-role client (streaks has NO client write policy), so a hostile
+// client can never fake a streak. Idempotent per local date. The transition
+// math lives in the pure `streaks-core` module (unit-tested); this file only
+// does I/O and surfaces a distinct technical error when the admin query fails
+// (e.g. a service-role key that doesn't match the target instance).
 // =====================================================================
 import { createAdminClient } from "@/lib/supabase-admin";
 import { getEntitlements } from "@/lib/entitlements";
-import { userLocalDate } from "@/lib/daily-drop";
+import { userLocalDate } from "@/lib/time/timezone";
 import { logAppEvent } from "@/lib/events";
+import { computeStreakTransition, STREAK_MILESTONES, type StreakState } from "@/lib/streaks-core";
 
-export const STREAK_MILESTONES = [3, 7, 14, 30, 100] as const;
-
-export interface StreakRow {
-  user_id: string;
-  current_count: number;
-  longest_count: number;
-  last_active_date: string | null;
-  freezes_remaining: number;
-  freezes_reset_at: string | null;
-}
+export { STREAK_MILESTONES };
+export type { StreakState };
 
 export interface CheckinResult {
   status: "incremented" | "already_counted" | "reset" | "frozen" | "error";
@@ -27,79 +23,62 @@ export interface CheckinResult {
   milestone: number | null;
 }
 
-function prevDateISO(dateISO: string): string {
-  const d = new Date(`${dateISO}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
+const ERROR_RESULT: CheckinResult = { status: "error", current: 0, longest: 0, milestone: null };
 
 /**
- * Record today's activity (opened the drop / logged an outfit).
- * - same day again  → already_counted (idempotent)
- * - yesterday active → +1
- * - 1-day gap + Pro freeze available → consume a freeze, +1 ("frozen")
- * - longer gap → reset to 1
+ * Record today's activity (opened the drop / logged an outfit). Idempotent:
+ * a same-day repeat returns already_counted with no increment; two concurrent
+ * calls converge to the same value (see streaks-core). A failed admin read/write
+ * returns status:"error" (surfaced by the route as a technical 500), NEVER a
+ * silent success.
  */
 export async function checkinStreak(userId: string, timezone: string | null): Promise<CheckinResult> {
   try {
     const admin = createAdminClient();
     const today = userLocalDate(timezone);
 
-    const { data } = await admin.from("streaks").select("*").eq("user_id", userId).maybeSingle();
-    const row = data as StreakRow | null;
+    const { data, error: readError } = await admin.from("streaks").select("*").eq("user_id", userId).maybeSingle();
+    if (readError) {
+      console.error("[checkinStreak] streaks read failed", {
+        userId, code: readError.code, message: readError.message, details: readError.details, hint: readError.hint,
+      });
+      return ERROR_RESULT;
+    }
+    const row = data as StreakState | null;
 
-    // Monthly freeze refill for Pro users (2/month), tracked by freezes_reset_at.
     const ent = await getEntitlements(userId);
-    const monthStart = `${today.slice(0, 7)}-01`;
-    let freezes = row?.freezes_remaining ?? 0;
-    let freezesResetAt = row?.freezes_reset_at ?? null;
-    if (ent.effectivePro && (!freezesResetAt || freezesResetAt.slice(0, 10) < monthStart)) {
-      freezes = ent.limits.streakFreezesPerMonth;
-      freezesResetAt = new Date().toISOString();
+    const t = computeStreakTransition({
+      row,
+      today,
+      pro: ent.effectivePro,
+      freezesPerMonth: ent.limits.streakFreezesPerMonth,
+      nowISO: new Date().toISOString(),
+    });
+
+    // Idempotent same-day repeat → no write.
+    if (!t.write) {
+      return { status: "already_counted", current: t.current, longest: t.longest, milestone: null };
     }
 
-    let status: CheckinResult["status"];
-    let current: number;
-
-    if (!row || !row.last_active_date) {
-      status = "incremented";
-      current = 1;
-    } else if (row.last_active_date === today) {
-      return {
-        status: "already_counted",
-        current: row.current_count,
-        longest: row.longest_count,
-        milestone: null,
-      };
-    } else if (row.last_active_date === prevDateISO(today)) {
-      status = "incremented";
-      current = row.current_count + 1;
-    } else if (ent.effectivePro && freezes > 0 && row.last_active_date === prevDateISO(prevDateISO(today))) {
-      // Exactly one missed day covered by a freeze.
-      freezes -= 1;
-      status = "frozen";
-      current = row.current_count + 1;
-    } else {
-      status = "reset";
-      current = 1;
-    }
-
-    const longest = Math.max(current, row?.longest_count ?? 0);
-    const { error } = await admin.from("streaks").upsert({
+    const { error: writeError } = await admin.from("streaks").upsert({
       user_id: userId,
-      current_count: current,
-      longest_count: longest,
+      current_count: t.current,
+      longest_count: t.longest,
       last_active_date: today,
-      freezes_remaining: freezes,
-      freezes_reset_at: freezesResetAt,
+      freezes_remaining: t.freezesRemaining,
+      freezes_reset_at: t.freezesResetAt,
       updated_at: new Date().toISOString(),
     });
-    if (error) return { status: "error", current: 0, longest: 0, milestone: null };
+    if (writeError) {
+      console.error("[checkinStreak] streaks write failed", {
+        userId, code: writeError.code, message: writeError.message, details: writeError.details, hint: writeError.hint,
+      });
+      return ERROR_RESULT;
+    }
 
-    const milestone = (STREAK_MILESTONES as readonly number[]).includes(current) && status !== "reset" ? current : null;
-    await logAppEvent("streak_checkin", userId, { status, current, milestone });
-    return { status, current, longest, milestone };
+    await logAppEvent("streak_checkin", userId, { status: t.status, current: t.current, milestone: t.milestone });
+    return { status: t.status, current: t.current, longest: t.longest, milestone: t.milestone };
   } catch {
-    return { status: "error", current: 0, longest: 0, milestone: null };
+    return ERROR_RESULT;
   }
 }

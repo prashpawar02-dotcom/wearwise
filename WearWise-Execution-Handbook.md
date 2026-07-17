@@ -333,3 +333,28 @@ No phase or hotfix may be pushed merely because automated tests pass. Any user-f
 - State is `new | in_progress | wardrobe_incomplete | ready | completed | error`. Wardrobe-dependent states are always computed live from `wardrobe_items`, never persisted, so they cannot go stale. Only `onboarding_step` (resume position) and `default_occasion` are new persisted columns (migration 0025).
 - Onboarding never inserts a `profiles` row — only targeted updates, preserving `handle_new_user()` as the single row-creation owner. Resume never regresses progress and never loses previously saved answers.
 - Already-onboarded users (`profiles.onboarded = true`) are never routed back into the 6-step flow; the shared `/onboarding` route still serves them the original settings-edit form.
+
+
+## Engineering rule — RLS never replaces table privileges (Phase 4 hardening)
+
+PostgreSQL checks TABLE privileges BEFORE RLS. An RLS policy on a table with no
+`GRANT` to the calling role is dead code — the request is rejected with 42501
+before any policy runs. This bit `daily_recommendations`/`profiles`/
+`wardrobe_items` (fixed in 0024), `streaks` (0027), and `outfit_requests` (0028),
+each created with RLS but omitted from the privilege migration.
+
+Mandatory for every table a client or server role touches:
+
+- Direct Supabase browser/SSR flows (role `authenticated`): a migration must
+  grant ONLY the proven table privileges, and a test must assert BOTH (a) the
+  role holds exactly those privileges (no TRUNCATE/TRIGGER/REFERENCES/DELETE
+  unless proven), and (b) RLS restricts rows to the authenticated owner
+  (`user_id = auth.uid()`), including cross-owner INSERT/SELECT denial. Note:
+  an `INSERT ... RETURNING` flow needs BOTH an INSERT with-check AND a SELECT
+  using policy.
+- Server-role flows (`service_role`): grant only the operations the server code
+  genuinely performs; test the explicit service_role privilege contract. Never
+  `GRANT ALL` without proof.
+- Add a real local PostgREST/RLS integration test (not only source-string
+  assertions) proving a real signed-in session can do the allowed operations and
+  is denied the disallowed/cross-owner ones.

@@ -204,6 +204,11 @@ export interface DailyRecommendation {
   pre_swap_item_ids?: string[] | null;
   swaps_used?: number;
   options_used?: number;
+  // Authoritative metadata (migration 0026): engine-owned completeness + freshness.
+  outfit_status?: "complete" | "partial" | "constrained" | null;
+  missing_slots?: string[] | null;
+  partial_reason?: string | null;
+  inventory_fingerprint?: string | null;
 }
 
 // ---- Subscriptions (migration 0012) ----

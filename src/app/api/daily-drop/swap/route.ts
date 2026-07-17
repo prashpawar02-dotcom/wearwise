@@ -4,9 +4,8 @@ import { isWearableItem } from "@/lib/wardrobe";
 import { getFlags } from "@/lib/flags";
 import { logAppEvent } from "@/lib/events";
 import { capMessage, capState } from "@/lib/swap-caps";
-import {
-  buildSwapContext, explainForItems, capSummary, sessionOrdinal,
-} from "@/lib/swap-server";
+import { buildSwapContext, capSummary, sessionOrdinal } from "@/lib/swap-server";
+import { persistMutatedRecommendation } from "@/lib/recommendation/persist";
 import { lockAndReplaceCandidates } from "@/lib/engine/swap";
 import { validateOutfitCurrent } from "@/lib/outfit-validity";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
@@ -91,7 +90,7 @@ export async function POST(req: Request) {
   }
 
   // ---- LOCK-AND-REPLACE LEGALITY (fail closed) ----
-  const ctx = await buildSwapContext(profile, rec);
+  const ctx = await buildSwapContext(supabase, profile, rec);
   const precomputed = rec.swap_candidates?.[replaceItemId];
   let valid = Array.isArray(precomputed) && precomputed.includes(replacementItemId);
   if (!valid) {
@@ -122,22 +121,14 @@ export async function POST(req: Request) {
       cap: capSummary(capBefore),
     });
   }
-  const explain = explainForItems(newOutfit, ctx);
-  const reason = explain.whyThisWorks[0] ?? "Keeps the look balanced for today";
-
-  const { error: upErr } = await supabase
-    .from("daily_recommendations")
-    .update({
-      selected_item_ids: newIds,
-      pre_swap_item_ids: selectedIds,
-      swaps_used: (rec.swaps_used ?? 0) + 1,
-      reasoning: reason,
-      confidence: explain.confidence,
-      factor_breakdown: explain.factor_breakdown,
-      is_dual_pick: explain.is_dual_pick,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", recommendationId).eq("user_id", user.id);
+  // Persist through the shared authoritative contract (locked decisions 7, 8):
+  // selected_item_ids + matching completeness/reason/confidence/fingerprint.
+  const { error: upErr, evaluated, reasoning } = await persistMutatedRecommendation(supabase, {
+    recId: recommendationId, userId: user.id,
+    selectedIds: newIds, items: newOutfit, inventory: allItems, ctx,
+    reasoningFallback: "Keeps the look balanced for today",
+    extra: { pre_swap_item_ids: selectedIds, swaps_used: (rec.swaps_used ?? 0) + 1 },
+  });
   if (upErr) return NextResponse.json({ status: "error", reason: "db_error" }, { status: 500 });
 
   await logAppEvent("swap_kept", user.id, { swaps_used: (rec.swaps_used ?? 0) + 1 });
@@ -148,8 +139,8 @@ export async function POST(req: Request) {
   return NextResponse.json({
     status: "updated",
     selectedItemIds: newIds,
-    reason,
-    whyThisWorks: explain.whyThisWorks,
+    reason: reasoning,
+    whyThisWorks: evaluated.whyThisWorks,
     cap: capSummary(capAfter),
   });
 }

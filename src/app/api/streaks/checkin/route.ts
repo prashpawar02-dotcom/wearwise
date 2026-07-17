@@ -19,7 +19,10 @@ export async function POST(req: Request) {
   const rl = await rateLimit(`streak:${user.id}`, 20, 60_000);
   if (!rl.ok) return NextResponse.json({ status: "error", reason: "rate_limited" }, { status: 429 });
 
-  const { data: profile } = await supabase.from("profiles").select("timezone").eq("id", user.id).single();
+  // Timezone read is OPTIONAL (maybeSingle → clean null on 0 rows). A failure
+  // here must not error the check-in; checkinStreak falls back to the default
+  // zone. The write path (service role) is where a real config error surfaces.
+  const { data: profile } = await supabase.from("profiles").select("timezone").eq("id", user.id).maybeSingle();
   const result = await checkinStreak(user.id, profile?.timezone ?? null);
   if (result.status === "error") {
     return NextResponse.json({ status: "error", reason: "db_error" }, { status: 500 });

@@ -3,7 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getFlags } from "@/lib/flags";
 import { logAppEvent } from "@/lib/events";
 import { capMessage, capState } from "@/lib/swap-caps";
-import { buildSwapContext, explainForItems, capSummary, sessionOrdinal } from "@/lib/swap-server";
+import { buildSwapContext, capSummary, sessionOrdinal } from "@/lib/swap-server";
+import { persistMutatedRecommendation } from "@/lib/recommendation/persist";
 import { moodSwap, MOODS, type Mood } from "@/lib/engine/swap";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
 
   const selectedIds = rec.selected_item_ids ?? [];
   const outfit = orderedOutfit(selectedIds, allItems);
-  const ctx = await buildSwapContext(profile, rec);
+  const ctx = await buildSwapContext(supabase, profile, rec);
 
   const result = moodSwap(allItems, outfit, mood as Mood, ctx);
   if (result.status !== "ok") {
@@ -75,22 +76,16 @@ export async function POST(req: Request) {
 
   const newIds = result.newItemIds;
   const newOutfit = orderedOutfit(newIds, allItems);
-  const explain = explainForItems(newOutfit, ctx);
-  const reason = result.reason ?? explain.whyThisWorks[0] ?? "A cleaner take for the mood you asked for";
 
-  const { error: upErr } = await supabase
-    .from("daily_recommendations")
-    .update({
-      selected_item_ids: newIds,
-      pre_swap_item_ids: selectedIds,
-      swaps_used: (rec.swaps_used ?? 0) + 1,
-      reasoning: reason,
-      confidence: explain.confidence,
-      factor_breakdown: explain.factor_breakdown,
-      is_dual_pick: explain.is_dual_pick,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", recommendationId).eq("user_id", user.id);
+  // Shared authoritative persistence (locked decisions 7, 8). Mood reason wins
+  // over the generic why-line.
+  const { error: upErr, evaluated, reasoning } = await persistMutatedRecommendation(supabase, {
+    recId: recommendationId, userId: user.id,
+    selectedIds: newIds, items: newOutfit, inventory: allItems, ctx,
+    reasoning: result.reason ?? undefined,
+    reasoningFallback: "A cleaner take for the mood you asked for",
+    extra: { pre_swap_item_ids: selectedIds, swaps_used: (rec.swaps_used ?? 0) + 1 },
+  });
   if (upErr) return NextResponse.json({ status: "error", reason: "db_error" }, { status: 500 });
 
   await logAppEvent("swap_kept", user.id, { swaps_used: (rec.swaps_used ?? 0) + 1, mood_swap: true });
@@ -103,8 +98,8 @@ export async function POST(req: Request) {
     mood,
     selectedItemIds: newIds,
     changedItemIds: [...result.removedItemIds, ...result.addedItemIds],
-    reason,
-    whyThisWorks: explain.whyThisWorks,
+    reason: reasoning,
+    whyThisWorks: evaluated.whyThisWorks,
     cap: capSummary(capAfter),
   });
 }

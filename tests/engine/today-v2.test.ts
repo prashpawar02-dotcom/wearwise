@@ -125,11 +125,19 @@ const swapSheet = readFileSync(SWAP_SHEET, "utf8");
 // 6. Missing slots are stated honestly.
 // =====================================================================
 {
-  ok("missing-slot copy names the slot from real data (missingSlots.join)", card.includes("missingSlots.join"));
-  ok("missing-slot copy tells the user to choose their own (never fabricates one)",
-    card.includes("pick your own to finish this look"));
-  ok("missingSlots is derived server-side from actual present slots, not hardcoded",
-    page.includes('presentSlots.has("Shoes") ? [] : ["Shoes"]'));
+  // Phase 4 (locked decisions 7 & 11): completeness + honest reason are ENGINE-
+  // OWNED and persisted, never inferred from the item list, and the old
+  // hardcoded "none were available today" claim is gone.
+  ok("missing-slot copy is rendered from the engine reason code (partialCopy)",
+    card.includes("partialCopy(drop.partialReason"));
+  ok("card no longer hardcodes the false 'none were available today' claim",
+    !card.includes("none were available today"));
+  ok("card never fabricates a missing piece (still tells the user to choose their own)",
+    card.includes("function partialCopy(") && card.includes("pick your own"));
+  ok("missingSlots come from the persisted authoritative column, not inferred present-slots",
+    page.includes("rec.missing_slots ?? []") && !page.includes('presentSlots.has("Shoes")'));
+  ok("partial_reason is read from the persisted authoritative column",
+    page.includes("rec.partial_reason"));
 }
 
 // =====================================================================
@@ -250,8 +258,8 @@ const swapSheet = readFileSync(SWAP_SHEET, "utf8");
   ok('"today_viewed" wired unconditionally on Today', page.includes('event="today_viewed"'));
   ok("exactly one today_viewed call site (unconditional, not per-branch)",
     (page.match(/event="today_viewed"/g) ?? []).length === 1);
-  ok('"today_constrained_viewed" still wired on both constrained branches',
-    (page.match(/event="today_constrained_viewed"/g) ?? []).length === 2);
+  ok('"today_constrained_viewed" wired on all non-view branches (needs_wardrobe + technical + failed)',
+    (page.match(/event="today_constrained_viewed"/g) ?? []).length === 3);
   ok("ViewBeacon effect depends only on `event` (no re-fire on rerender/refresh)",
     /useEffect\(\(\) => \{[\s\S]*?\}, \[event\]\)/.test(beacon));
   ok("ViewBeacon documents today_viewed's initial-state-only semantics",
