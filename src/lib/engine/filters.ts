@@ -12,8 +12,8 @@ import type { WardrobeItem } from "@/lib/types";
 import type { EngineContext, FilterRejection } from "@/lib/engine/types";
 import { validateOutfitItems } from "@/lib/outfitValidation";
 import {
-  engineRole, fabricMaxTempC, formalityOf, colorFamilyOf, looksEthnic,
-  culturalTagOf, modestyOf, isActivewear, matchesRuleKey, itemText,
+  engineRole, fabricMaxTempC, formalityOf, colorFamilyOf, culturalResolution,
+  modestyOf, isActivewear, matchesRuleKey, itemText,
 } from "@/lib/engine/classify";
 import { patternClashGuard, dupattaLayerGuard, shoeCompatibilityGuard } from "@/lib/engine/guards";
 
@@ -94,9 +94,11 @@ export function eligiblePool(items: WardrobeItem[], ctx: EngineContext): PoolRes
     const role = engineRole(i);
     if (role === "unknown" || !isTagUsable(i)) { push(i, "structure", "Unclassifiable or still tagging."); continue; }
     if (!isAvailable(i)) { push(i, "availability", "In the wash or unavailable."); continue; }
-    // cultural confirmation: ethnic-looking items with an unconfirmed cultural_tag
-    // are held back from auto-recommendation until the user confirms.
-    if (looksEthnic(i) && culturalTagOf(i) == null) { push(i, "cultural_unconfirmed", "Ethnic item with unconfirmed cultural tag."); continue; }
+    // cultural confirmation (locked decision 1): trust an explicit structured
+    // ethnic category (Kurta/Saree/Dupatta) even when cultural_tag is null. Only
+    // hold back items that are ethnic by KEYWORD inference and still unconfirmed.
+    const cr = culturalResolution(i);
+    if (cr.effectiveEthnic && !cr.eligibleWithoutTag) { push(i, "cultural_unconfirmed", "Ethnic item (by name) with unconfirmed cultural tag."); continue; }
     if (!passesWeather(i, ctx)) { push(i, "weather", "Fabric too warm for today."); continue; }
     if (!passesFormalityWindow(i, ctx)) { push(i, "formality_window", "Outside the occasion's formality window."); continue; }
     if (!passesUserExclusions(i, ctx)) { push(i, "user_exclusion", "Matches a user absolute exclusion."); continue; }

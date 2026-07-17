@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { recommendOutfits } from "@/lib/engine/recommend";
 import { eligiblePool } from "@/lib/engine/filters";
-import { engineRole } from "@/lib/engine/classify";
+import { engineRole, culturalSourceOf } from "@/lib/engine/classify";
 import { loadEngineContext } from "@/lib/engine/loadContext";
 import { DEFAULT_OCCASION_PROFILES } from "@/lib/engine/config";
 import type { EngineOccasion, ScoredOutfit } from "@/lib/engine/types";
@@ -100,6 +100,7 @@ export async function GET(req: Request) {
     availability: i.availability_status ?? "available",
     formality: i.formality ?? null,
     cultural_tag: i.cultural_tag ?? null,
+    cultural_source: culturalSourceOf(i),
     occasion_tags: i.occasion_tags ?? [],
   }));
 
@@ -122,6 +123,7 @@ export async function GET(req: Request) {
     outfit_status: result.outfitStatus,
     missing_slots: result.missingSlots,
     partial_reason: result.partialReason ?? null,
+    partial_reason_code: result.partialReasonCode ?? null,
     dual_pick: result.dualPick,
     fail_reason: result.failReason ?? null,
     hero: result.hero ? serialize(result.hero) : null,

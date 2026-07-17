@@ -26,7 +26,7 @@ const RE = {
   bottom: /\b(jean|jeans|denim|trouser|chino|pant|pants|legging|palazzo|skirt|jogger|short|shorts|dhoti|culotte|capri|salwar|churidar|patiala|sharara|garara|track ?pant|leggings)\b/,
   upper: /\b(shirt|tee|t-?shirt|top|blouse|polo|henley|camisole|cami|crop|tank|tunic)\b/,
   outerwear: /\b(jacket|blazer|coat|overshirt|cardigan|shrug|waistcoat|nehru|sherwani)\b/,
-  footwear: /\b(shoe|shoes|sneaker|trainer|loafer|boot|sandal|heel|heels|jutti|juti|mojari|flat|flats|footwear|kolhapuri|pump)\b/,
+  footwear: /\b(shoe|sneaker|trainer|loafer|boot|sandal|heel|jutti|juti|mojari|flat|footwear|kolhapuri|pump)s?\b/,
   accessory: /\b(belt|watch|bag|clutch|purse|jewel|jewellery|jewelry|necklace|earring|earrings|bangle|bracelet|tie|brooch|scarf|hat|cap|sunglass)\b/,
   activewear: /\b(gym|sport|active|athletic|track ?pant|joggers|tracksuit|yoga|running|workout|dri-?fit|sweatpant|leggings)\b/,
 };
@@ -175,4 +175,51 @@ export function matchesRuleKey(i: WardrobeItem, key: string): boolean {
     default:
       return itemText(i).includes(key);
   }
+}
+
+// =====================================================================
+// Cultural role resolution (Phase 4 hotfix — locked decision 1)
+// Trust ONLY structured ethnic categories to derive an effective cultural
+// role when cultural_tag is null. Generic Top/Bottom/Dress whose free text
+// merely looks ethnic stay fail-closed. We NEVER write/backfill cultural_tag.
+// =====================================================================
+export type CulturalSource = "explicit_category" | "keyword_inference" | "none";
+
+/** Structured ethnic categories the schema supports today (locked to these). */
+export const EXPLICIT_ETHNIC_CATEGORIES: ReadonlySet<string> = new Set([
+  "kurta", "saree", "dupatta",
+]);
+
+export interface CulturalResolution {
+  /** The item carries an ethnic role for pairing/eligibility. */
+  effectiveEthnic: boolean;
+  /** Provenance of that decision (recorded in diagnostics, never persisted to the row). */
+  source: CulturalSource;
+  /** True when the item may be auto-recommended without a confirmed cultural_tag. */
+  eligibleWithoutTag: boolean;
+}
+
+/**
+ * Resolve an item's cultural standing WITHOUT mutating it.
+ *  - explicit structured ethnic category (Kurta/Saree/Dupatta) → trusted,
+ *    eligible even when cultural_tag is null (source = "explicit_category").
+ *  - generic category but ethnic-looking free text → keyword_inference; only
+ *    eligible once cultural_tag is confirmed (fail closed).
+ *  - otherwise not ethnic.
+ */
+export function culturalResolution(i: WardrobeItem): CulturalResolution {
+  const cat = (i.category ?? "").trim().toLowerCase();
+  if (EXPLICIT_ETHNIC_CATEGORIES.has(cat)) {
+    return { effectiveEthnic: true, source: "explicit_category", eligibleWithoutTag: true };
+  }
+  if (looksEthnic(i)) {
+    const confirmed = culturalTagOf(i) != null;
+    return { effectiveEthnic: true, source: "keyword_inference", eligibleWithoutTag: confirmed };
+  }
+  return { effectiveEthnic: false, source: "none", eligibleWithoutTag: true };
+}
+
+/** Diagnostics-only provenance label for an item's cultural role. */
+export function culturalSourceOf(i: WardrobeItem): CulturalSource {
+  return culturalResolution(i).source;
 }

@@ -56,6 +56,22 @@ export async function POST(req: Request) {
 
   const result = await prepareDailyDrop(user.id, { force, supabase: admin, source: "manual" });
 
+  // HTTP contract (locked): a profile/config/query failure is a TECHNICAL error
+  // (retryable) — it must NOT be reported as a wardrobe/eligibility failure.
+  if (result.status === "error") {
+    return NextResponse.json(
+      { status: "error", reason: "technical_error", retryable: true, localDate: result.localDate },
+      { status: 500 }
+    );
+  }
+  // A genuinely absent profile → the user needs onboarding/setup, not a retry.
+  if (result.status === "setup_required") {
+    return NextResponse.json(
+      { status: "setup_required", reason: "profile_missing", redirect: "/onboarding", localDate: result.localDate },
+      { status: 409 }
+    );
+  }
+
   // Shape an explicit, minimal response. selected_item_ids are IDs only (no
   // image paths / signed URLs ever), so nothing sensitive is exposed here.
   return NextResponse.json(

@@ -48,7 +48,7 @@ const fnStart = page.indexOf("async function ensureTodayDrop");
 const fn = fnStart >= 0 ? page.slice(fnStart) : "";
 const createIdx = fn.indexOf("prepareDailyDrop(userId, { supabase, ignoreOptIn: true })");
 const regenIdx = fn.indexOf("prepareDailyDrop(userId, { force: true, supabase })");
-const elseIdx = fn.indexOf('} else if (rec.status !== "failed")');
+const elseIdx = fn.indexOf('} else {'); // Phase 4: create in if-branch, freshness regen in else-branch
 const finalValIdx = fn.indexOf("const validity = await validateOutfitCurrent(supabase, userId, ids);");
 
 ok("exactly one create call in ensureTodayDrop",

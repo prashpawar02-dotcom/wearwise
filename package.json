@@ -12,7 +12,9 @@
     "audit:invalid-drafts": "tsx --env-file=.env.local scripts/audit-invalid-outfit-drafts.ts",
     "test:engine": "node scripts/run-engine-tests.mjs",
     "test": "node scripts/run-engine-tests.mjs",
-    "test:atomic-wear:local": "node scripts/test-atomic-wear-local.mjs"
+    "test:atomic-wear:local": "node scripts/test-atomic-wear-local.mjs",
+    "test:streak-concurrency:local": "node scripts/test-streak-concurrency-local.mjs",
+    "test:outfit-request-privileges:local": "node scripts/test-outfit-request-privileges-local.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

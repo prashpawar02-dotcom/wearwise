@@ -148,9 +148,12 @@ async function runCron(req: Request): Promise<NextResponse> {
       const result = await prepareDailyDrop(p.id, { supabase: admin, source: "cron" });
       if (result.status === "prepared") summary.prepared += 1;
       else if (result.status === "exists") summary.exists += 1;
-      else if (result.status === "failed") {
+      else if (result.status === "failed" || result.status === "error" || result.status === "setup_required") {
+        // "error" = technical/profile-query failure; "setup_required" = absent
+        // profile. Both are counted as failures with their real reason (never a
+        // silent success), so cron health surfaces server-config problems.
         summary.failed += 1;
-        summary.errors.push({ userId: p.id, reason: result.reason ?? "failed" });
+        summary.errors.push({ userId: p.id, reason: result.reason ?? result.status });
       }
       // "disabled" shouldn't occur (we filtered enabled), but is a no-op here.
     } catch {

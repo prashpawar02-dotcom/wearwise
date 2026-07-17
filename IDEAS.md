@@ -2,6 +2,19 @@
 
 Log only. Do not build without CEO approval / the owning phase.
 
+## Discovered during Phase 4 (Recommendation Consistency Hotfix)
+
+- **Extend the structured category model to Lehenga / Sherwani / Ethnic Bottom.**
+  Locked decision 1 limited trusted explicit ethnic categories to Kurta/Saree/
+  Dupatta (the ones the schema + autotag enum support today). Lehenga/Sherwani/
+  ethnic bottoms currently arrive as sub_category/name and stay keyword-inferred
+  (fail-closed without a cultural_tag). Extending the `category` enum + the autotag
+  prompt would let them be trusted too. Deferred: enum + prompt change, out of
+  hotfix scope.
+- **Hosted migration/schema reconciliation.** The hosted ledger lists through 0022
+  while local has 0020/0023–0025 (columns appear applied out-of-band). A separate
+  production reconciliation plan is required before applying 0026 to hosted.
+
 ## Discovered during Phase 4B (Today v2)
 
 - **Wardrobe item-count + recent-requests removed from Today.** The old

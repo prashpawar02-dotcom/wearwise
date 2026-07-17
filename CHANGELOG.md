@@ -1,5 +1,45 @@
 # WearWise — Changelog
 
+## Phase 4 — Recommendation Consistency Hotfix (IN PROGRESS — not production-verified) (2026-07-15)
+
+Local-only branch `phase-4-recommendation-consistency-hotfix`. NOT committed,
+pushed, deployed, or migrated to hosted Supabase. **Status: implementation +
+unit tests complete; localhost transition matrix, `supabase db reset`, and
+`npm run build` NOT yet run — the fix is NOT verified.** See
+`docs/proposals/recommendation-authority.md` (approved architecture).
+
+**Defect (proven in Stage 1 audit).** Today ran a separate legacy assembler
+(`daily-drop.ts` `assembleOutfit`/`roleForItem`) while Admin QA / Swap / Another
+Option ran the deterministic v2 engine — two eligibility authorities plus four
+role classifiers. A stored shoeless partial (generated before footwear was
+uploaded) never refreshed because freshness only fired when a *selected* item
+became unavailable, and the card asserted a hardcoded "Missing shoes — none were
+available today" that was false. Another Option blacklisted every worn item
+(including shoes), stranding shoeless partials.
+
+**Change (pending localhost verification).**
+- Today generation + stale regeneration now run through the v2 engine
+  (`recommendOutfits`) under the shared authenticated context (`loadEngineContext`)
+  — the same pipeline as Admin QA. Legacy `assembleOutfit`/`roleForItem` and the
+  Today-only alt/swap helpers were removed. `engineRole` is the sole classifier;
+  `validateOutfitItems` now sources roles from it.
+- Authoritative metadata (`outfit_status`, `missing_slots`, `partial_reason`,
+  `inventory_fingerprint`) is engine-owned and persisted via one shared writer
+  contract (`recommendation/persist.ts`); the UI renders honest reason-code copy.
+- Canonical inventory fingerprint drives freshness across every slot (regenerate
+  once on partial/constrained + inventory change; no churn on complete outfits).
+- Another Option excludes only the exact current combination and may reuse footwear.
+- Cultural: explicit `Kurta`/`Saree`/`Dupatta` categories are trusted without a
+  `cultural_tag` (`cultural_source="explicit_category"`); keyword-only ethnic names
+  stay fail-closed.
+- Migration `0026_recommendation_authority` (+ rollback) — NOT applied to hosted.
+
+Verified locally: `tsc --noEmit` clean, `eslint` clean, `npm run test:engine`
+green for all recommendation/engine suites incl. new `recommendation-authority`
+(3 remaining failures are pre-existing CRLF exact-match assertions unrelated to
+this change). Pending (user, localhost): db reset, build, manual transition
+matrix A–F, Today/Admin-QA diagnostics parity.
+
 ## Phase 4D — Onboarding v2 (2026-07-14)
 
 Local-only, not committed/pushed/deployed. Rebuilt first-run onboarding as a

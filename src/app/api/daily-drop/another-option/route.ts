@@ -1,27 +1,40 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getWeatherContext } from "@/lib/weather";
-import { alternativeOutfitItems, preferLayerFor, ANOTHER_OPTION_REASONING } from "@/lib/daily-drop";
 import { getFlags } from "@/lib/flags";
 import { rateLimit } from "@/lib/rate-limit";
 import { isUuid, parseJsonBody } from "@/lib/validate";
 import { logAppEvent } from "@/lib/events";
 import { capMessage, capState } from "@/lib/swap-caps";
-import { buildSwapContext, explainForItems, capSummary, sessionOrdinal } from "@/lib/swap-server";
+import { buildSwapContext, capSummary, sessionOrdinal } from "@/lib/swap-server";
+import { persistMutatedRecommendation } from "@/lib/recommendation/persist";
+import { recommendOutfits } from "@/lib/engine/recommend";
 import { validateOutfitCurrent } from "@/lib/outfit-validity";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 /**
- * "Another Option" — a full-outfit alternate for today's Daily Drop (Phase 3).
- * CACHE FIRST (Module B): serve pre-computed alternatives before recomputing.
- * CAP (Phase 3): 2 options/drop free; first 3 sessions cap-exempt. Enforced
- * server-side. Not Pro-gated anymore; Pro line omitted from cap message.
+ * "Another Option" — a full-outfit alternate for today's Daily Drop.
+ *
+ * LOCKED DECISION 9: alternates exclude ONLY the exact current combination —
+ * never blacklist every worn item. Alternates are whole valid outfits from the
+ * authoritative engine (recommendOutfits), so they may legitimately REUSE the
+ * current footwear / bottom. Complete outfits are always preferred over partial.
+ *
+ * CACHE FIRST (Module B): serve the pre-computed engine backups before recompute.
+ * CAP: 2 options/drop free; first 3 sessions cap-exempt (server-enforced).
  */
+const ANOTHER_OPTION_REASONING =
+  "Another take from your available wardrobe, favouring pieces you haven't worn recently.";
+
 function orderedOutfit(ids: string[], all: WardrobeItem[]): WardrobeItem[] {
   const byId = new Map(all.map((i) => [i.id, i]));
   return ids.map((id) => byId.get(id)).filter((i): i is WardrobeItem => Boolean(i));
+}
+
+/** Order-independent signature of an outfit (the EXACT combination). */
+function comboSig(ids: string[]): string {
+  return [...ids].filter(Boolean).sort().join("|");
 }
 
 export async function POST(req: Request) {
@@ -65,86 +78,75 @@ export async function POST(req: Request) {
   ]);
   const profile = profileData as Profile | null;
   const allItems = (itemData ?? []) as WardrobeItem[];
-  const ctx = await buildSwapContext(profile, rec);
+  const ctx = await buildSwapContext(supabase, profile, rec);
+  const currentIds = rec.selected_item_ids ?? [];
   const capAfter = () => capState({
     swapsUsed: rec.swaps_used ?? 0, optionsUsed: (rec.options_used ?? 0) + 1, sessionOrdinal: ordinal,
   });
 
-  // ---- 1) serve from the pre-computed cache (0 compute, 0 tokens) ----
+  // Exclude ONLY the exact current combination (locked decision 9) plus any
+  // alternates already shown this drop, so repeated taps keep advancing.
   const altSets = Array.isArray(rec.alt_item_ids) ? rec.alt_item_ids : [];
   const cursor = rec.alt_cursor ?? 0;
+  const shown = new Set<string>([comboSig(currentIds), ...altSets.slice(0, cursor).map(comboSig)]);
+
+  // ---- 1) serve from the pre-computed cache (0 compute) ----
   if (cursor < altSets.length) {
     const cached = altSets[cursor];
-    // Cache safety: a precomputed alternate can go stale (an item entered the
-    // wash after generation). Only serve it if every item is still available;
-    // otherwise fall through to a fresh deterministic recompute.
     const cachedValid = cached && cached.length > 0
       ? await validateOutfitCurrent(supabase, user.id, cached, { ctx })
       : { valid: false };
-    if (Array.isArray(cached) && cached.length > 0 && cachedValid.valid) {
-      const explain = explainForItems(orderedOutfit(cached, allItems), ctx);
-      const reason = explain.whyThisWorks[0] ?? ANOTHER_OPTION_REASONING;
-      const { error: upErr } = await supabase
-        .from("daily_recommendations")
-        .update({
-          selected_item_ids: cached,
+    if (Array.isArray(cached) && cached.length > 0 && cachedValid.valid && !shown.has(comboSig(cached))) {
+      const { error, evaluated, reasoning } = await persistMutatedRecommendation(supabase, {
+        recId: recommendationId, userId: user.id,
+        selectedIds: cached, items: orderedOutfit(cached, allItems), inventory: allItems, ctx,
+        reasoningFallback: ANOTHER_OPTION_REASONING,
+        extra: {
           alt_cursor: cursor + 1,
           options_used: (rec.options_used ?? 0) + 1,
-          pre_swap_item_ids: rec.selected_item_ids ?? [],
-          reasoning: reason,
-          confidence: explain.confidence,
-          factor_breakdown: explain.factor_breakdown,
-          is_dual_pick: explain.is_dual_pick,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", recommendationId).eq("user_id", user.id);
-      if (!upErr) {
+          pre_swap_item_ids: currentIds,
+        },
+      });
+      if (!error) {
         await logAppEvent("another_option", user.id, { cached: true, options_used: (rec.options_used ?? 0) + 1 });
         return NextResponse.json({
-          status: "updated", selectedItemIds: cached, reason, whyThisWorks: explain.whyThisWorks,
+          status: "updated", selectedItemIds: cached, reason: reasoning, whyThisWorks: evaluated.whyThisWorks,
           cached: true, cap: capSummary(capAfter()),
         });
       }
     }
   }
 
-  // ---- 2) fallback: recompute deterministically ----
-  let preferLayer = false;
-  if (profile?.weather_advice_enabled && profile.city) {
-    const weather = await getWeatherContext(profile.city);
-    if (weather) preferLayer = preferLayerFor(weather.category, weather.tempC);
-  }
-
-  const items = alternativeOutfitItems(allItems, rec.selected_item_ids ?? [], preferLayer);
-  if (!items) {
+  // ---- 2) fallback: recompute deterministically via the authoritative engine.
+  // Complete outfits are preferred (engine ranks them first); we pick the first
+  // whole outfit whose EXACT combination differs from the current one (and any
+  // already shown). Footwear/bottom may be reused — we never blacklist items.
+  const result = recommendOutfits(allItems, ctx, 8);
+  const pool = result.hero ? [result.hero, ...result.backups] : [];
+  const pick = pool.find((o) => !shown.has(comboSig(o.itemIds)));
+  if (!pick) {
     return NextResponse.json({
       status: "not_enough_items",
-      selectedItemIds: rec.selected_item_ids ?? [],
+      selectedItemIds: currentIds,
       reasoning: rec.reasoning,
     });
   }
 
-  const newIds = items.map((i) => i.id);
-  const explain = explainForItems(items, ctx);
-  const reason = explain.whyThisWorks[0] ?? ANOTHER_OPTION_REASONING;
-  const { error: upErr } = await supabase
-    .from("daily_recommendations")
-    .update({
-      selected_item_ids: newIds,
+  const newIds = pick.itemIds;
+  const { error, evaluated, reasoning } = await persistMutatedRecommendation(supabase, {
+    recId: recommendationId, userId: user.id,
+    selectedIds: newIds, items: pick.items, inventory: allItems, ctx,
+    reasoningFallback: ANOTHER_OPTION_REASONING,
+    extra: {
       options_used: (rec.options_used ?? 0) + 1,
-      pre_swap_item_ids: rec.selected_item_ids ?? [],
-      reasoning: reason,
-      confidence: explain.confidence,
-      factor_breakdown: explain.factor_breakdown,
-      is_dual_pick: explain.is_dual_pick,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", recommendationId).eq("user_id", user.id);
-  if (upErr) return NextResponse.json({ status: "error", reason: "db_error" }, { status: 500 });
+      pre_swap_item_ids: currentIds,
+    },
+  });
+  if (error) return NextResponse.json({ status: "error", reason: "db_error" }, { status: 500 });
 
   await logAppEvent("another_option", user.id, { cached: false, options_used: (rec.options_used ?? 0) + 1 });
   return NextResponse.json({
-    status: "updated", selectedItemIds: newIds, reason, whyThisWorks: explain.whyThisWorks,
+    status: "updated", selectedItemIds: newIds, reason: reasoning, whyThisWorks: evaluated.whyThisWorks,
     cap: capSummary(capAfter()),
   });
 }

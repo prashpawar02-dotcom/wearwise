@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { logAppEvent } from "@/lib/events";
-import { buildSwapContext, explainForItems } from "@/lib/swap-server";
+import { buildSwapContext } from "@/lib/swap-server";
+import { persistMutatedRecommendation } from "@/lib/recommendation/persist";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -50,25 +51,17 @@ export async function POST(req: Request) {
   const allItems = (itemData ?? []) as WardrobeItem[];
 
   const restored = orderedOutfit(snapshot, allItems);
-  const ctx = await buildSwapContext(profile, rec);
-  const explain = explainForItems(restored, ctx);
-  const reason = explain.whyThisWorks[0] ?? "Back to the look you liked";
+  const ctx = await buildSwapContext(supabase, profile, rec);
 
-  const { error: upErr } = await supabase
-    .from("daily_recommendations")
-    .update({
-      selected_item_ids: snapshot,
-      pre_swap_item_ids: null,          // nothing left to undo
-      reasoning: reason,
-      confidence: explain.confidence,
-      factor_breakdown: explain.factor_breakdown,
-      is_dual_pick: explain.is_dual_pick,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", body.recommendationId).eq("user_id", user.id);
+  const { error: upErr, evaluated, reasoning } = await persistMutatedRecommendation(supabase, {
+    recId: body.recommendationId, userId: user.id,
+    selectedIds: snapshot, items: restored, inventory: allItems, ctx,
+    reasoningFallback: "Back to the look you liked",
+    extra: { pre_swap_item_ids: null },   // nothing left to undo
+  });
   if (upErr) return NextResponse.json({ status: "error", reason: "db_error" }, { status: 500 });
 
   await logAppEvent("swap_reverted", user.id, {});
 
-  return NextResponse.json({ status: "restored", selectedItemIds: snapshot, reason, whyThisWorks: explain.whyThisWorks });
+  return NextResponse.json({ status: "restored", selectedItemIds: snapshot, reason: reasoning, whyThisWorks: evaluated.whyThisWorks });
 }

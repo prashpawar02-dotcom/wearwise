@@ -75,9 +75,12 @@ export interface DailyDropView {
   cap: CapView | null;
   /** Phase 3: true when a swap can be undone (pre-swap snapshot exists). */
   hasUndo: boolean;
-  /** Phase 4B: slots this outfit is honestly missing (currently only ever
-   *  ["Shoes"] — the engine never fabricates a replacement). Empty = complete. */
+  /** Phase 4: slots this outfit is honestly missing (engine-persisted; e.g.
+   *  ["Shoes"]). Empty = complete. The engine never fabricates a replacement. */
   missingSlots: string[];
+  /** Phase 4: engine-persisted honest reason code for the partial state (locked
+   *  decision 11). Drives the user-facing copy — never a hardcoded claim. */
+  partialReason?: string | null;
   /** Phase 4B: stored engine confidence (0-1) for this pick, or null if
    *  unavailable. Never displayed as a raw number — used only to gate the
    *  honest low-confidence caption below Why This Works. */
@@ -90,6 +93,34 @@ export interface DailyDropView {
 type RepeatStatus = "no_history" | "repeat_safe" | "one_recent" | "multiple_recent";
 
 const RECENT_DAYS = 7;
+
+/**
+ * Honest, reason-specific partial copy (locked decision 11). We only claim "none
+ * available" when the engine diagnostics prove zero owned footwear. Every other
+ * case names the real reason (in wash / unavailable / archived / still tagging /
+ * occasion mismatch) without exposing raw diagnostics.
+ */
+function partialCopy(reason: string | null | undefined, slots: string[]): string {
+  const slot = (slots.join(" & ").toLowerCase() || "shoes");
+  switch (reason) {
+    case "no_footwear_in_wardrobe":
+      return "You have no shoes saved yet — add a pair to finish this look.";
+    case "footwear_in_wash":
+      return "Your shoes are in the wash — pick another pair to finish this look.";
+    case "footwear_unavailable":
+      return "Your shoes are marked unavailable right now — pick another pair to finish.";
+    case "footwear_archived":
+      return "Those shoes are archived — restore or add a pair to finish this look.";
+    case "incomplete_tagging":
+      return "Still analysing your shoes — try again shortly, or pick your own for now.";
+    case "occasion_or_formality_mismatch":
+      return `No ${slot} match today's occasion — pick your own to finish this look.`;
+    case "no_available_footwear":
+      return "Your shoes are all unavailable right now — pick another pair to finish.";
+    default:
+      return `Add ${slot} to finish this look.`;
+  }
+}
 
 function daysSince(d: string | null): number | null {
   if (!d) return null;
@@ -400,7 +431,7 @@ export function DailyDropCard({
         <div className="mb-3 flex items-start gap-2 rounded-ww-md border border-champagne/30 bg-champagne/[0.08] px-3 py-2.5">
           <Icon.Hanger className="mt-0.5 h-3.5 w-3.5 shrink-0 text-champagne" />
           <p className="text-xs leading-snug text-charcoal">
-            Missing {missingSlots.join(" & ").toLowerCase()} — none were available today, so pick your own to finish this look.
+            {partialCopy(drop.partialReason, missingSlots)}
           </p>
         </div>
       )}

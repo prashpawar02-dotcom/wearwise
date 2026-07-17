@@ -1,13 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
 import { getWeatherContext } from "@/lib/weather";
 import { isWearableItem } from "@/lib/wardrobe";
-import { defaultContext } from "@/lib/outfit-engine";
 import { constrainedInventoryNote, DEFAULT_WASH_CYCLE_DAYS, daysSinceDate } from "@/lib/laundry";
-import { explainSelectedOutfit } from "@/lib/engine/recommend";
+import { resolveTimezone, localDateISO } from "@/lib/time/timezone";
+import { classifyProfileResult } from "@/lib/recommendation/profile-guard";
+import { recommendOutfits } from "@/lib/engine/recommend";
+import { loadEngineContext } from "@/lib/engine/loadContext";
+import { resolveEngineOccasion, contextForOccasion } from "@/lib/engine/occasion";
+import { engineRole } from "@/lib/engine/classify";
 import { lockAndReplaceCandidates } from "@/lib/engine/swap";
-import type { EngineContext, EngineOccasion } from "@/lib/engine/types";
+import { computeInventoryFingerprint } from "@/lib/recommendation/fingerprint";
+import { freshAuthoritativeColumns } from "@/lib/recommendation/persist";
+import type { RecommendationResult } from "@/lib/engine/types";
 import type { DailyRecommendation, Profile, WardrobeItem } from "@/lib/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+// Timezone helpers now live in a pure module; re-export for existing importers.
+export { userLocalDate } from "@/lib/time/timezone";
 
 /**
  * Daily Outfit Drop — server-side prepare + cache (Phase 2).
@@ -25,14 +34,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * It runs as the signed-in user (their Supabase session; RLS applies).
  */
 
-// When the user has no saved timezone yet, fall back to the launch-market zone.
-// (Architecture doc §4: MVP default tz; per-user tz already supported.)
-const DEFAULT_TZ = "Asia/Kolkata";
-
 // A usable outfit needs at least this many pieces once assembled.
 const MIN_OUTFIT_ITEMS = 2;
 
-export type PrepareStatus = "prepared" | "exists" | "disabled" | "failed";
+export type PrepareStatus = "prepared" | "exists" | "disabled" | "failed" | "error" | "setup_required";
 
 export interface PrepareResult {
   status: PrepareStatus;
@@ -49,115 +54,13 @@ export interface PrepareResult {
 // query surface used here; all queries are explicitly scoped by user_id.
 type DbClient = SupabaseClient;
 
-/** True if `tz` is a valid IANA timezone the runtime understands. */
-function isValidTimeZone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-CA", { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
-/**
- * Resolve a usable timezone. If the profile has a valid IANA zone we use it;
- * otherwise we fall back to DEFAULT_TZ and flag `usedFallback` so callers can
- * surface an honest warning. We NEVER guess from city and NEVER pretend a
- * missing/invalid zone is reliable.
- */
-function resolveTimezone(tz: string | null | undefined): { timeZone: string; usedFallback: boolean } {
-  if (tz && isValidTimeZone(tz)) return { timeZone: tz, usedFallback: false };
-  return { timeZone: DEFAULT_TZ, usedFallback: true };
-}
-
-/** Resolve the user's LOCAL calendar date ('YYYY-MM-DD') for a timezone. */
-export function userLocalDate(timezone: string | null | undefined, now: Date = new Date()): string {
-  return localDateISO(timezone, now);
-}
-
-/** Resolve the user's LOCAL calendar date ('YYYY-MM-DD') for a timezone. */
-function localDateISO(timezone: string | null | undefined, now: Date = new Date()): string {
-  const { timeZone } = resolveTimezone(timezone);
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
-
-// ---------------------------------------------------------------------------
-// Role classification — readable predicates over category / sub-category /
-// name / style / notes. Kept general: Western AND Indian/traditional wardrobes
-// both work; nothing here is over-fit to one culture.
-// ---------------------------------------------------------------------------
-
-/** All the free-text signals we can match a garment against, lower-cased. */
-function itemText(item: WardrobeItem): string {
-  return [item.user_facing_name, item.sub_category, item.category, item.style, item.notes]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-function isShoeLike(t: string): boolean {
-  return /(footwear|shoe|heel|flat|sandal|loafer|mule|boot|sneaker|trainer|pump|espadrille|oxford|derby|ballet|jutti|juti|mojari|mojri|kolhapuri)/.test(t);
-}
-function isSareeLike(t: string): boolean {
-  return /(saree|sari)\b/.test(t);
-}
-function isDressLike(t: string): boolean {
-  // Western one-piece + long ethnic one-piece (anarkali, gown) that need no bottom.
-  return /(dress|gown|jumpsuit|frock|maxi|midi|bodycon|shift|anarkali)/.test(t);
-}
-function isLayerLike(t: string): boolean {
-  return /(jacket|blazer|coat|overshirt|cardigan|shrug|hoodie|sweatshirt|sweater|pullover|knit|nehru|waistcoat|gilet)/.test(t);
-}
-function isAccessoryLike(t: string): boolean {
-  return /(belt|watch|jewel|bag|clutch|earring|stud|scarf|dupatta|stole|odhani|sunglass|necklace|bangle|tie|brooch|hat|cap|pocket square)/.test(t);
-}
-function isBottomLike(t: string): boolean {
-  return /(jean|denim|trouser|chino|pant|legging|palazzo|skirt|jogger|short|dhoti|culotte|capri|bottom|salwar|churidar|patiala|ghagra|lehenga|sharara|garara)/.test(t);
-}
-function isTopLike(t: string): boolean {
-  return /(top|shirt|tee|t-?shirt|blouse|kurta|kurti|tunic|camisole|cami|crop|polo|henley|choli)/.test(t);
-}
-/** Marks an item as ethnic/traditional — used to label the outfit + add a dupatta. */
-function isTraditionalLike(t: string): boolean {
-  return /(kurta|kurti|saree|sari|lehenga|choli|anarkali|sherwani|salwar|churidar|dupatta|patiala|ghagra|kalidar|angrakha|jutti|mojari|dhoti|nehru|sharara|garara|kanjivaram|banarasi)/.test(t);
-}
-
-type Role = "top" | "bottom" | "dress" | "saree" | "shoes" | "layer" | "accessory" | "other";
-
-/**
- * Classify a wardrobe item into an outfit role. Order matters: footwear and
- * one-piece garments are checked before separates so, e.g., a "saree" is a core
- * piece and "juttis" are shoes rather than being mis-bucketed.
- */
-function roleForItem(item: WardrobeItem): Role {
-  const t = itemText(item);
-  if (isShoeLike(t)) return "shoes";
-  if (isSareeLike(t)) return "saree";
-  if (/(dupatta|stole|odhani)/.test(t)) return "accessory"; // traditional drape → accessory
-  if (isDressLike(t)) return "dress";
-  if (isLayerLike(t)) return "layer";
-  if (isBottomLike(t)) return "bottom";
-  if (isTopLike(t)) return "top";
-  if (isAccessoryLike(t)) return "accessory";
-  return "other";
-}
 
 /** Auto-tag states that are safe to style with (have real metadata). */
 function isUsableItem(item: WardrobeItem): boolean {
   return item.ai_tag_status !== "analyzing" && item.ai_tag_status !== "failed";
 }
 
-/** Least-recently-worn first (never-worn counts as longest unworn). */
-function byLeastRecentlyWorn(a: WardrobeItem, b: WardrobeItem): number {
-  const av = a.last_worn_at ? Date.parse(a.last_worn_at) : 0;
-  const bv = b.last_worn_at ? Date.parse(b.last_worn_at) : 0;
-  return av - bv;
-}
 
 function labelOf(item: WardrobeItem): string {
   return item.user_facing_name || [item.color, item.category].filter(Boolean).join(" ") || item.category || "an item";
@@ -178,69 +81,6 @@ function joinLabels(labels: string[]): string {
 
 type CoreKind = "western" | "dress" | "traditional" | null;
 
-interface OutfitPlan {
-  items: WardrobeItem[];
-  core: CoreKind;
-  shoesAvailable: boolean;
-  shoesIncluded: boolean;
-  layerIncluded: boolean;
-}
-
-/**
- * Deterministically assemble one practical outfit from wearable items.
- * Handles Western (top+bottom), one-piece dresses, and traditional looks
- * (kurta+bottom(+dupatta), saree(+blouse), lehenga+choli). Least-recently-worn
- * pieces are preferred within each role.
- */
-function assembleOutfit(wearable: WardrobeItem[], preferLayer: boolean): OutfitPlan {
-  const buckets: Record<Role, WardrobeItem[]> = {
-    top: [], bottom: [], dress: [], saree: [], shoes: [], layer: [], accessory: [], other: [],
-  };
-  for (const item of wearable) buckets[roleForItem(item)].push(item);
-  for (const role of Object.keys(buckets) as Role[]) buckets[role].sort(byLeastRecentlyWorn);
-
-  const chosen: WardrobeItem[] = [];
-  let core: CoreKind = null;
-
-  if (buckets.top.length > 0 && buckets.bottom.length > 0) {
-    // Western separates OR traditional kurta+bottom (lehenga+choli lands here too).
-    const top = buckets.top[0];
-    const bottom = buckets.bottom[0];
-    chosen.push(top, bottom);
-    core = isTraditionalLike(itemText(top)) || isTraditionalLike(itemText(bottom)) ? "traditional" : "western";
-  } else if (buckets.dress.length > 0) {
-    chosen.push(buckets.dress[0]);
-    core = isTraditionalLike(itemText(buckets.dress[0])) ? "traditional" : "dress";
-  } else if (buckets.saree.length > 0) {
-    chosen.push(buckets.saree[0]);
-    core = "traditional";
-    if (buckets.top.length > 0) chosen.push(buckets.top[0]); // saree blouse if present
-  }
-
-  const shoesAvailable = buckets.shoes.length > 0;
-  let shoesIncluded = false;
-  let layerIncluded = false;
-
-  if (core) {
-    if (shoesAvailable) {
-      chosen.push(buckets.shoes[0]);
-      shoesIncluded = true;
-    }
-    // Layer only when weather suggests it (cool/rainy/windy).
-    if (preferLayer && buckets.layer.length > 0) {
-      chosen.push(buckets.layer[0]);
-      layerIncluded = true;
-    }
-    // Accessory: don't force a weak one. For traditional looks, a dupatta/stole
-    // genuinely completes the outfit, so add it when present.
-    if (core === "traditional") {
-      const drape = buckets.accessory.find((a) => /(dupatta|stole|odhani)/.test(itemText(a)));
-      if (drape && !chosen.includes(drape)) chosen.push(drape);
-    }
-  }
-
-  return { items: chosen, core, shoesAvailable, shoesIncluded, layerIncluded };
-}
 
 interface ReasoningOpts {
   core: CoreKind;
@@ -269,9 +109,8 @@ function buildReasoning(items: WardrobeItem[], opts: ReasoningOpts): string {
     parts.push("Weather isn't available right now, so this is based on your wardrobe and the day.");
   }
 
-  if (!opts.shoesIncluded) {
-    parts.push("No footwear was available, so add a pair of shoes to finish it.");
-  }
+  // Footwear-missing copy is owned by the UI reason-code map (locked decision 11),
+  // never asserted here.
   // Prefer the specific constrained-inventory honesty line when the wardrobe is
   // laundry-pressured; otherwise fall back to the plain skip count.
   if (opts.constrainedNote) {
@@ -322,6 +161,11 @@ interface UpsertInput {
   factor_breakdown?: Record<string, unknown> | null;
   is_dual_pick?: boolean;
   engine_version?: string | null;
+  /** Authoritative metadata (migration 0026): completeness + honest reason + freshness. */
+  outfit_status?: string | null;
+  missing_slots?: string[];
+  partial_reason?: string | null;
+  inventory_fingerprint?: string | null;
   /** Phase 3 (migration 0022): swap infra. */
   swap_candidates?: Record<string, string[]>;
   base_item_ids?: string[];
@@ -379,17 +223,35 @@ export async function prepareDailyDrop(
   const force = options.force ?? false;
 
   // ---- Load profile (drives timezone, opt-in, weather + quiet-gem prefs) ----
-  const { data: profileData } = await supabase.from("profiles").select("*").eq("id", userId).single();
-  const profile = profileData as Profile | null;
+  // maybeSingle() so a zero-row read is a clean null (not a PGRST116 error), and
+  // we classify the result so a QUERY FAILURE (config / RLS / JWT / PostgREST /
+  // connection) is NEVER mislabelled as a missing profile (locked hardening).
+  const profileRes = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+  const profileClass = classifyProfileResult(profileRes);
+  const profile = (profileRes.data ?? null) as Profile | null;
 
-  // Resolve timezone honestly: use the saved zone if valid, else a fallback
-  // that is flagged as a warning (never silently pretend it's reliable).
+  // Resolve timezone honestly (legacy aliases like Asia/Calcutta are normalized,
+  // so a valid saved zone never triggers a false fallback warning).
   const tzInfo = resolveTimezone(profile?.timezone);
   const tzWarning = tzInfo.usedFallback ? "timezone_missing_or_invalid_default_used" : undefined;
   const localDate = options.localDate ?? localDateISO(profile?.timezone);
 
+  if (profileClass.status === "profile_query_failed") {
+    // TECHNICAL failure — retryable, never "no_profile". Safe server log only
+    // (code/message/details/hint; no tokens). No timezone warning: it is a
+    // symptom of the failed load, not a real zone problem.
+    console.error("[prepareDailyDrop] profile query failed", {
+      userId,
+      code: profileRes.error?.code ?? null,
+      message: profileRes.error?.message ?? null,
+      details: profileRes.error?.details ?? null,
+      hint: profileRes.error?.hint ?? null,
+    });
+    return { status: "error", localDate, reason: "profile_query_failed", recommendation: null };
+  }
   if (!profile) {
-    return { status: "failed", localDate, reason: "no_profile", warning: tzWarning, recommendation: null };
+    // Confirmed zero rows with no query error → the user needs setup/onboarding.
+    return { status: "setup_required", localDate, reason: "profile_missing", warning: tzWarning, recommendation: null };
   }
 
   // ---- Opt-in gate: never prepare for a disabled user (wins over any cache),
@@ -421,7 +283,11 @@ export async function prepareDailyDrop(
   const { data: itemData } = await supabase.from("wardrobe_items").select("*").eq("user_id", userId);
   const allItems = (itemData ?? []) as WardrobeItem[];
 
-  const failWith = async (reason: string, message: string): Promise<PrepareResult> => {
+  const failWith = async (
+    reason: string,
+    message: string,
+    result?: RecommendationResult,
+  ): Promise<PrepareResult> => {
     const rec = await upsertRecommendation(supabase, {
       user_id: userId,
       local_date: localDate,
@@ -432,6 +298,12 @@ export async function prepareDailyDrop(
       reasoning: message,
       daily_insight: null,
       fail_reason: reason,
+      // Authoritative constrained metadata so reads treat this as fresh, not "unknown".
+      outfit_status: "constrained",
+      missing_slots: result?.missingSlots ?? [],
+      partial_reason: result?.partialReasonCode ?? null,
+      inventory_fingerprint: computeInventoryFingerprint(allItems),
+      engine_version: "v2",
     });
     return { status: "failed", localDate, reason, warning: tzWarning, recommendation: rec };
   };
@@ -455,7 +327,6 @@ export async function prepareDailyDrop(
   let weatherSummary: string | null = null;
   let weatherAdvice: string | null = null;
   let weatherAvailable = false;
-  let preferLayer = false;
   let weatherTempC: number | null = null;
   let weatherIsRaining = false;
   if (profile.weather_advice_enabled && profile.city) {
@@ -466,102 +337,88 @@ export async function prepareDailyDrop(
       weatherAdvice = weather.advice;
       weatherTempC = weather.tempC;
       weatherIsRaining = weather.category === "rainy";
-      preferLayer = weather.category === "rainy" || weather.category === "windy" || weather.tempC < 20;
     }
   }
 
-  // ---- Assemble a practical outfit ----
-  const plan = assembleOutfit(wearable, preferLayer);
-
-  if (!plan.core) {
-    return failWith(
-      "outfit_roles_incomplete",
-      "Couldn't build a complete outfit from what's available — add a top and a bottom, or a dress, then try again."
-    );
-  }
-  if (plan.items.length < MIN_OUTFIT_ITEMS) {
-    // A lone core piece with nothing to complete it. If the only gap is shoes,
-    // say so specifically; otherwise it's a general roles gap.
-    if (!plan.shoesAvailable) {
-      return failWith("no_footwear_available", "Add a pair of shoes (or a few more pieces) to complete today's outfit.");
-    }
-    return failWith("outfit_roles_incomplete", "Add a few more wearable pieces to complete today's outfit.");
-  }
-
-  // ---- Module B: pre-compute "another option" candidates in the SAME pass
-  // so swaps/options later read this cache instead of recomputing or ever
-  // touching the LLM. Up to 2 alternatives, none sharing items with earlier picks.
-  const altSets: string[][] = [];
-  {
-    let avoid = plan.items.map((i) => i.id);
-    for (let k = 0; k < 2; k++) {
-      const alt = alternativeOutfitItems(allItems, avoid, preferLayer);
-      if (!alt) break;
-      altSets.push(alt.map((i) => i.id));
-      avoid = [...avoid, ...alt.map((i) => i.id)];
-    }
-  }
-
-  // ---- Engine v2: score the chosen outfit and persist its factor breakdown.
-  // This stores real per-recommendation factor contributions + confidence
-  // (Phase 1). It does NOT change which outfit was selected; Phase 4 rewires
-  // selection itself onto recommendOutfits().
-  const engineOccasion: EngineOccasion = plan.core === "traditional" ? "ethnic" : "casual";
-  // One weather-aware context reused for BOTH the stored explanation and the
-  // Phase 3 swap precompute, so Why-This-Works and swap candidates agree.
-  const engineCtx: EngineContext = {
-    ...defaultContext(engineOccasion),
+  // ---- Resolve occasion + canonical engine context (locked decisions 3, 4) ----
+  // Today generation runs through the SAME authoritative pipeline as Admin QA:
+  // loadEngineContext (per-user prefs + config + live weather) under the
+  // canonically-resolved occasion. No Today-only assembler remains.
+  const occasion = resolveEngineOccasion(profile.default_occasion);
+  const engineCtx = await loadEngineContext({
+    supabase,
+    userId,
+    occasion,
     weather: { tempC: weatherTempC, isRaining: weatherIsRaining },
-  };
-  const engineExplain = explainSelectedOutfit(plan.items, engineCtx);
+  });
 
-  // ---- Phase 3: precompute up to 5 lock-and-replace candidates per outfit
-  // piece so a swap renders < 1s p75. IDs ONLY — never image paths/URLs. Keyed
-  // by the outfit item id the user would tap. Empty array = complete / none.
+  // ---- Authoritative generation via the deterministic v2 engine ----
+  const result = recommendOutfits(allItems, engineCtx, 3);
+  const hero = result.hero;
+  if (!hero) {
+    // Genuinely constrained: no complete or honest-partial outfit can be formed.
+    const reason =
+      result.failReason === "no_wearable_items" ? "too_few_wearable_items" : "outfit_roles_incomplete";
+    const message =
+      reason === "too_few_wearable_items"
+        ? "Not enough wearable items right now — add clothes or mark some available to prepare an outfit."
+        : "We couldn't build a full outfit from what's available today — add a top and a bottom, or a dress, then try again.";
+    return failWith(reason, message, result);
+  }
+
+  const heroItems = hero.items;
+  const shoesIncluded = heroItems.some((i) => engineRole(i) === "footwear");
+  const layerIncluded = heroItems.some((i) => engineRole(i) === "outerwear");
+
+  // ---- Module B: alternates are engine BACKUPS — whole valid outfits with
+  // distinct cores. They may legitimately REUSE footwear/bottom (locked
+  // decision 9); we never blacklist every current item.
+  const altSets: string[][] = result.backups.map((b) => b.itemIds);
+
+  // ---- Phase 3: precompute up to 5 lock-and-replace candidates per hero piece.
   const swapCandidatesMap: Record<string, string[]> = {};
-  for (const it of plan.items) {
-    const res = lockAndReplaceCandidates(allItems, plan.items, it, engineCtx, 5);
+  for (const it of heroItems) {
+    const res = lockAndReplaceCandidates(allItems, heroItems, it, engineCtx, 5);
     swapCandidatesMap[it.id] = res.status === "ok" ? res.candidates.map((c) => c.id) : [];
   }
 
-  // Constrained-inventory honesty line (Phase 2): when an occasion-critical
-  // category is mostly in the wash, say so once per wash-cycle (never a push).
-  const occasionWordForNote = plan.core === "traditional" ? "ethnic" : "everyday";
+  // Constrained-inventory honesty line (Phase 2): once per wash-cycle.
+  const occasionWordForNote = occasion === "ethnic" ? "ethnic" : "everyday";
   const rawConstrained = constrainedInventoryNote(allItems, occasionWordForNote);
   const washCycle = profile.wash_cycle_days ?? DEFAULT_WASH_CYCLE_DAYS;
   const daysSinceWashNote = daysSinceDate(profile.laundry_wash_note_at ?? null);
   const constrainedNote =
     rawConstrained && (daysSinceWashNote == null || daysSinceWashNote >= washCycle) ? rawConstrained : null;
 
+  const fingerprint = computeInventoryFingerprint(allItems);
+
   const rec = await upsertRecommendation(supabase, {
     user_id: userId,
     local_date: localDate,
     status: "prepared",
-    selected_item_ids: plan.items.map((i) => i.id),
-    confidence: engineExplain.confidence,
-    factor_breakdown: engineExplain.factor_breakdown,
-    is_dual_pick: engineExplain.is_dual_pick,
-    engine_version: "v2",
+    selected_item_ids: heroItems.map((i) => i.id),
+    // Authoritative engine-owned metadata (locked decision 7) — never re-derived.
+    ...freshAuthoritativeColumns(result, fingerprint),
     // Phase 3: precomputed swap candidates + pristine base outfit (ids only).
     swap_candidates: swapCandidatesMap,
-    base_item_ids: plan.items.map((i) => i.id),
+    base_item_ids: heroItems.map((i) => i.id),
     swaps_used: 0,
     options_used: 0,
     pre_swap_item_ids: null,
     alt_item_ids: altSets,
     alt_cursor: 0,
     weather_summary: weatherSummary,
-    occasion_context: plan.core === "traditional" ? "traditional" : "daily",
-    reasoning: buildReasoning(plan.items, {
-      core: plan.core,
+    occasion_context: contextForOccasion(occasion),
+    reasoning: buildReasoning(heroItems, {
+      core: null,
       weatherAvailable,
       weatherAdvice,
-      layerIncluded: plan.layerIncluded,
-      shoesIncluded: plan.shoesIncluded,
+      layerIncluded,
+      shoesIncluded,
       laundryExcluded,
       constrainedNote,
     }),
-    daily_insight: buildInsight(plan.items, profile.show_quiet_gems),
+    daily_insight: buildInsight(heroItems, profile.show_quiet_gems),
     fail_reason: null,
   });
 
@@ -579,66 +436,4 @@ export async function prepareDailyDrop(
   }
 
   return { status: "prepared", localDate, warning: tzWarning, recommendation: rec };
-}
-
-// ===================== Daily Drop actions (Phase 1 habit engine) =====================
-
-/** Public role label for an item (used by swap matching + analytics). */
-export function garmentRole(item: WardrobeItem): string {
-  return roleForItem(item);
-}
-
-/** Honest, fixed copy for a one-item swap. */
-export const SWAP_REASONING =
-  "Swapped one piece while keeping the outfit weather-ready and repeat-safe.";
-
-/** Honest, fixed copy for a regenerated alternative. */
-export const ANOTHER_OPTION_REASONING =
-  "Another take from your available wardrobe, favouring pieces you haven't worn recently.";
-
-/**
- * Replacement candidates for one item: same role, wearable + usable, not already
- * in the outfit, least-recently-worn first, capped at `limit`.
- */
-export function swapCandidates(
-  allItems: WardrobeItem[],
-  selectedIds: string[],
-  replaceItem: WardrobeItem,
-  limit = 5
-): WardrobeItem[] {
-  const role = roleForItem(replaceItem);
-  const selected = new Set(selectedIds);
-  return allItems
-    .filter(
-      (i) =>
-        isWearableItem(i) &&
-        isUsableItem(i) &&
-        i.id !== replaceItem.id &&
-        !selected.has(i.id) &&
-        roleForItem(i) === role
-    )
-    .sort(byLeastRecentlyWorn)
-    .slice(0, Math.max(0, limit));
-}
-
-/**
- * A second deterministic outfit that shares NO item with `avoidIds`. Returns the
- * chosen items, or null when the remaining wearable pool can't form a full look.
- */
-export function alternativeOutfitItems(
-  allItems: WardrobeItem[],
-  avoidIds: string[],
-  preferLayer: boolean
-): WardrobeItem[] | null {
-  const avoid = new Set(avoidIds);
-  const pool = allItems.filter((i) => isWearableItem(i) && isUsableItem(i) && !avoid.has(i.id));
-  const plan = assembleOutfit(pool, preferLayer);
-  if (!plan.core || plan.items.length < MIN_OUTFIT_ITEMS) return null;
-  return plan.items;
-}
-
-/** Compute the weather-driven layer preference for a user (server-side, optional). */
-export function preferLayerFor(category: string | null | undefined, tempC: number | null | undefined): boolean {
-  if (!category || tempC == null) return false;
-  return category === "rainy" || category === "windy" || tempC < 20;
 }

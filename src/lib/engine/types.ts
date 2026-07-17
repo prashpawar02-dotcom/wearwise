@@ -174,6 +174,8 @@ export interface RecommendationResult {
   missingSlots: MissingSlot[];
   /** Why a partial result was returned (present only in partial mode). */
   partialReason?: PartialReason;
+  /** Fine-grained, user-explainable partial/constrained reason (locked decision 11). */
+  partialReasonCode?: PartialReasonCode | null;
   /** Honest one-liner when an occasion-critical category is mostly in the wash
    *  (Phase 2). Null when the wardrobe isn't laundry-constrained. */
   constrainedNote?: string | null;
@@ -192,3 +194,40 @@ export interface RecommendationResult {
 }
 
 export type { WardrobeItem };
+
+// =====================================================================
+// Phase 4 hotfix — authoritative persisted metadata (locked decisions 7, 11)
+// =====================================================================
+
+/** Persisted outfit completeness state (mirrors daily_recommendations.outfit_status). */
+export type OutfitStatus = "complete" | "partial" | "constrained";
+
+/**
+ * Fine-grained, user-explainable reason a recommendation is partial or
+ * constrained. The SINGLE authority for "why is footwear missing?" lives in
+ * engine/footwear.ts; nothing else may invent these.
+ */
+export type PartialReasonCode =
+  | "no_footwear_in_wardrobe"
+  | "no_available_footwear"
+  | "footwear_in_wash"
+  | "footwear_unavailable"
+  | "footwear_archived"
+  | "incomplete_tagging"
+  | "occasion_or_formality_mismatch";
+
+/** Engine evaluation of an ALREADY-selected outfit (swap/mood/put-back/another-option). */
+export interface EvaluatedOutfit {
+  outfit_status: OutfitStatus;
+  missing_slots: MissingSlot[];
+  partial_reason: PartialReasonCode | null;
+  confidence: number;
+  is_dual_pick: boolean;
+  factor_breakdown: {
+    factors: FactorContribution[];
+    penalties: FactorContribution[];
+    whyThisWorks: string[];
+    total: number;
+  };
+  whyThisWorks: string[];
+}

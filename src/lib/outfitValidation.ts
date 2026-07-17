@@ -1,12 +1,20 @@
 // =====================================================================
-// WearWise — outfit structure validation
-// Pure, dependency-free TypeScript so it is safe to import on the server
-// (API routes) AND in client components (the admin curation UI).
+// WearWise — outfit STRUCTURE validation
+// Pure, dependency-free enough to import on the server (API routes) AND in
+// client components (the admin curation UI).
 //
 // Purpose: stop the AI (and manual edits) from producing physically
-// impossible looks like kurta + kurta or kurta + t-shirt. We map each
-// wardrobe item to a normalized garment ROLE and check the combination.
+// impossible looks like kurta + kurta or kurta + t-shirt.
+//
+// LOCKED DECISION 2: this module no longer owns a garment-role classification
+// table. Every item role is sourced from the single authoritative classifier
+// `engineRole` (engine/classify). This module keeps ONLY the structural outfit
+// rules (core slots, one-piece rules, saree/drape requirements, incompatible
+// combinations, accessory constraints).
 // =====================================================================
+import type { WardrobeItem } from "@/lib/types";
+import type { EngineRole } from "@/lib/engine/types";
+import { engineRole, isKurta, isSaree, isBelt, isLehenga, itemText } from "@/lib/engine/classify";
 
 export type GarmentRole =
   | "upper"
@@ -32,74 +40,71 @@ export interface ValidationResult {
   reason?: string;
 }
 
-// Exact category -> role (categories are a fixed, known set in this app).
-const CATEGORY_ROLE: Record<string, GarmentRole> = {
-  top: "upper",
-  kurta: "upper", // ethnic upper; pairs with a bottom (+ optional dupatta)
-  bottom: "bottom",
-  dress: "one_piece",
-  saree: "one_piece",
-  dupatta: "dupatta",
-  footwear: "footwear",
-  outerwear: "outerwear",
-  accessory: "accessory",
-};
+/**
+ * Adapt a minimal RoleClassifiableItem to the WardrobeItem shape the engine
+ * classifier reads. `name` is mapped onto `user_facing_name` so legacy callers
+ * that only set `name` still classify. All fields the engine reads are optional,
+ * so the cast is runtime-safe.
+ */
+function asItem(i: RoleClassifiableItem): WardrobeItem {
+  return {
+    ...(i as Record<string, unknown>),
+    user_facing_name: i.user_facing_name ?? i.name ?? null,
+  } as unknown as WardrobeItem;
+}
 
-// Keyword fallback when category is missing/unknown. Ordered: more specific
-// roles first so generic words like "top" don't shadow real matches.
-const KEYWORD_ROLE: ReadonlyArray<readonly [GarmentRole, readonly string[]]> = [
-  ["outerwear", ["jacket", "blazer", "cardigan", "coat"]],
-  ["one_piece", ["dress", "anarkali", "gown", "saree", "jumpsuit"]],
-  ["dupatta", ["dupatta", "stole", "scarf"]],
-  ["footwear", ["shoes", "sandal", "heel", "sneaker", "jutti", "juttis", "mojari", "flats"]],
-  ["accessory", ["necklace", "earring", "earrings", "bracelet", "bag", "belt", "clutch"]],
-  ["bottom", ["jeans", "trouser", "pant", "palazzo", "salwar", "churidar", "legging", "skirt", "lehenga"]],
-  ["upper", ["kurta", "kurti", "t-shirt", "tshirt", "tee", "shirt", "blouse", "top"]],
-];
+/** Map the authoritative EngineRole onto the coarse structural GarmentRole. */
+function garmentRoleFromEngine(r: EngineRole): GarmentRole {
+  switch (r) {
+    case "upper":
+    case "ethnic_upper":
+    case "activewear_top":
+      return "upper";
+    case "bottom":
+    case "activewear_bottom":
+      return "bottom";
+    case "one_piece":
+    case "saree":
+      return "one_piece";
+    case "outerwear":
+      return "outerwear";
+    case "drape":
+      return "dupatta";
+    case "footwear":
+      return "footwear";
+    case "accessory":
+      return "accessory";
+    default:
+      return "unknown";
+  }
+}
 
-function itemText(item: RoleClassifiableItem): string {
-  return [item.category, item.sub_category, item.user_facing_name, item.name]
-    .filter((s): s is string => typeof s === "string" && s.length > 0)
-    .join(" ")
-    .toLowerCase();
+/** Normalize a wardrobe item to a single structural garment role (via engineRole). */
+export function roleForItem(item: RoleClassifiableItem): GarmentRole {
+  return garmentRoleFromEngine(engineRole(asItem(item)));
 }
 
 /** True if the item is a kurta/kurti specifically (a single ethnic upper). */
 export function isKurtaItem(item: RoleClassifiableItem): boolean {
-  const cat = (item.category ?? "").trim().toLowerCase();
-  if (cat === "kurta") return true;
-  const text = itemText(item);
-  return text.includes("kurta") || text.includes("kurti");
+  return isKurta(asItem(item));
 }
 
-/** True if the item is a belt specifically (accessory that must not sit over ethnic wear). */
+/** True if the item is a belt specifically (must not sit over ethnic wear). */
 export function isBeltItem(item: RoleClassifiableItem): boolean {
-  return /\bbelt\b/.test(itemText(item));
+  return isBelt(asItem(item));
 }
 
 /** True if the item is a saree/sari (a one-piece ethnic anchor). */
 export function isSareeItem(item: RoleClassifiableItem): boolean {
-  const cat = (item.category ?? "").trim().toLowerCase();
-  if (cat === "saree") return true;
-  return /\b(saree|sari)\b/.test(itemText(item));
+  return isSaree(asItem(item));
 }
 
 /** True if the look has an ethnic anchor a dupatta can legitimately belong to. */
 export function hasEthnicAnchor(items: RoleClassifiableItem[]): boolean {
-  return items.some((i) => isKurtaItem(i) || isSareeItem(i) || /\b(anarkali|lehenga|choli|sherwani)\b/.test(itemText(i)));
-}
-
-/** Normalize a wardrobe item to a single garment role. */
-export function roleForItem(item: RoleClassifiableItem): GarmentRole {
-  const cat = (item.category ?? "").trim().toLowerCase();
-  if (cat && CATEGORY_ROLE[cat]) return CATEGORY_ROLE[cat];
-
-  const text = itemText(item);
-  if (!text) return "unknown";
-  for (const [role, keywords] of KEYWORD_ROLE) {
-    if (keywords.some((k) => text.includes(k))) return role;
-  }
-  return "unknown";
+  return items.some((i) => {
+    const it = asItem(i);
+    return isKurta(it) || isSaree(it) || isLehenga(it) || /\b(anarkali|choli|sherwani)\b/.test(itemText(it));
+  });
 }
 
 /**
@@ -113,9 +118,7 @@ export function validateOutfitItems(items: RoleClassifiableItem[]): ValidationRe
 
   const roles = items.map(roleForItem);
 
-  // FAIL CLOSED: any item we can't classify (missing category/name, or an
-  // unrecognized type) blocks the whole look. We never approve an outfit we
-  // can't reason about.
+  // FAIL CLOSED: any item we can't classify blocks the whole look.
   if (roles.some((r) => r === "unknown")) {
     return {
       valid: false,
@@ -135,13 +138,10 @@ export function validateOutfitItems(items: RoleClassifiableItem[]): ValidationRe
   ).length;
 
   // --- cultural pairing legality (extends the fail-closed 3-place gate) ---
-  // Belts are not worn over a kurta or saree.
   const beltCount = items.filter(isBeltItem).length;
   if (beltCount >= 1 && (kurtaCount >= 1 || items.some(isSareeItem))) {
     return { valid: false, reason: "A belt isn't worn over a kurta or saree." };
   }
-  // A dupatta needs an ethnic anchor (kurta / saree / anarkali) — never a
-  // western top + pants or a western dress.
   const dupattaCount = roles.filter((r) => r === "dupatta").length;
   if (dupattaCount >= 1 && !hasEthnicAnchor(items)) {
     return { valid: false, reason: "A dupatta needs a kurta or saree — it doesn't pair with a western outfit." };
@@ -182,17 +182,14 @@ export function validateOutfitItems(items: RoleClassifiableItem[]): ValidationRe
     return { valid: false, reason: "This look has a bottom but no top." };
   }
   if (upper === 1 && bottom === 1) {
-    return { valid: true }; // upper + bottom (+ optional dupatta/accessory/footwear/outerwear)
+    return { valid: true };
   }
 
-  // Nothing formed a valid structure (e.g. only accessories/footwear).
   return { valid: false, reason: "Couldn't confirm a complete outfit — need a top + bottom, or a single one-piece." };
 }
 
 /**
- * Resolve item ids against a lookup, then validate. FAILS CLOSED: if the id
- * list is empty, or ANY id can't be resolved to a real item, the outfit is
- * invalid (we never silently drop items and approve a partial look).
+ * Resolve item ids against a lookup, then validate. FAILS CLOSED.
  */
 export function validateOutfitByIds(
   itemIds: string[],

@@ -36,8 +36,8 @@ const UP = "supabase/migrations/0023_atomic_wear_confirmation.sql";
 // every .sql file under migrations/ during db reset, so a *_down.sql file
 // left there would unintentionally become part of the "up" chain.
 const DOWN = "supabase/rollbacks/0023_atomic_wear_confirmation_down.sql";
-const up = readFileSync(UP, "utf8");
-const down = readFileSync(DOWN, "utf8");
+const up = readFileSync(UP, "utf8").replace(/\r\n/g, "\n");
+const down = readFileSync(DOWN, "utf8").replace(/\r\n/g, "\n");
 
 // =====================================================================
 // 1. Function shape, security model, least-privilege grants.

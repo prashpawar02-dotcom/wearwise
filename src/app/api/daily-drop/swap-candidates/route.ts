@@ -60,7 +60,7 @@ export async function GET(req: Request) {
   }));
 
   const outfit = orderedOutfit(selectedIds, allItems);
-  const ctx = await buildSwapContext(profile, rec);
+  const ctx = await buildSwapContext(supabase, profile, rec);
   const result = lockAndReplaceCandidates(allItems, outfit, replaceItem, ctx, 5);
 
   if (result.status !== "ok") {
