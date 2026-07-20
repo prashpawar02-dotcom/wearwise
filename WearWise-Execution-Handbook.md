@@ -408,19 +408,26 @@ Phase 4 production migrations: `0023_atomic_wear_confirmation` · `0024_app_role
 | 2026-07-06 | `6eb1973` | Phase 1 recommendation engine v2 (0020). |
 
 
-## 11. Phase 5 Local Completion Status (Addendum — 2026-07-18)
+## 11. Phase 5 Production Completion Status (Addendum — 2026-07-18, closed out 2026-07-20)
 
-*Records LOCAL status only. Section 10 (Phase 4 production record) is unchanged
-and remains the last production-verified release.*
+*Phase 5 is PRODUCTION COMPLETE. Section 10 (Phase 4) remains the record of the
+prior release; this section supersedes it as the current production state.*
 
-### 11.1 Status — local complete, NOT released
-- Branch `phase-5-closet-board-v2`; **nothing committed, pushed, deployed, or
-  merged.**
-- Migration `0029_gem_cooldown.sql` is applied to the **LOCAL** Supabase stack
-  only. **Hosted production remains at `0001–0028`.** 0029 is NOT
-  production-applied and Phase 5 is NOT production-deployed.
-- Exactly one new forward migration (`0029`); its rollback lives only in
-  `supabase/rollbacks/0029_gem_cooldown_down.sql` (non-executed).
+### 11.1 Status — PRODUCTION COMPLETE (2026-07-20)
+- Branch `phase-5-closet-board-v2` merged to `main` via PR #1. **Production
+  commit `72cb6fb` (`72cb6fba680aefcede05852ac62eeff6f469399f`).**
+- Vercel production deployment **Ready** on that commit; `/api/health` returned
+  200 (`{ok:true, build:"api-health"}`), confirming the App Router API tree is
+  live on the expected build.
+- Migration `0029_gem_cooldown.sql` is **applied to hosted Supabase**. The hosted
+  ledger now reads `0001–0029`. It was applied AFTER the preflight drift checks
+  and BEFORE the deployment, which is safe because 0029 is additive-only and
+  references no object the previously-deployed Phase 4 build touched.
+- Exactly one new forward migration (`0029`); its rollback remains in
+  `supabase/rollbacks/0029_gem_cooldown_down.sql` and is still **non-executed**.
+  A rollback would permanently destroy all cooldown state and all
+  `gem_removal_events` idempotency records — code-only rollback is preferred for
+  anything short of data corruption.
 
 ### 11.2 Scope delivered (see CHANGELOG for detail)
 Closet Board v2 (deterministic single placement, collapsible sections,
@@ -453,8 +460,39 @@ availability validation immediately before render · recommendation authority
 atomic Wore-It (0023, untouched) · swap / Another Option separation ·
 partial/constrained honesty · existing RLS and table privileges.
 
-### 11.5 Remaining before release
-Chairman-gated: commit → push → hosted `0029` apply → deploy → production smoke.
+### 11.5 Release record (completed 2026-07-20)
+Executed in order: commit → push → PR #1 merged to `main` (`72cb6fb`) → hosted
+`0029` apply → Vercel deploy → production smoke.
+
+**Post-migration verification passed.** Ledger includes `0029`; the three
+`wardrobe_items` columns exist with the intended types, defaults and nullability;
+both CHECK constraints present and validated; `gem_removal_events` created with
+`UNIQUE (user_id, operation_id)` and its backing index; RLS enabled; exactly one
+policy (`gem_removal_owner_select`, SELECT, `user_id = auth.uid()`) and no
+INSERT/UPDATE/DELETE policy; `authenticated` holds SELECT only on the table;
+`record_gem_removal` present as SECURITY DEFINER and `reset_gem_skip_after_wear`
+as SECURITY INVOKER, both with `search_path` pinned to `public, pg_temp`; no
+`anon` or `PUBLIC` EXECUTE on either function; `authenticated` EXECUTE on both.
+
+**Production smoke passed** across all ten areas: Closet Board, insight cards,
+quick check, Today gem note, laundry-triggered regeneration/honest constrained
+state, Retry, atomic Wore-It, two accepted gem removals producing exactly one
+rest message, duplicate operation-id not double-counting, and event delivery.
+
+**Stabilization integrity queries passed** — no rows violating the
+rested-requires-cooldown invariant and no duplicate `(user_id, operation_id)`.
+
+**Telemetry: CONFIRMED.** The Phase 5 events are arriving (`gem_shown`,
+`gem_worn`, `board_section_toggled`, `insight_card_tapped`, `tag_edited`,
+`tagcheck_completed` client-side; `gem_removed`, `gem_rested` via the server
+`app_events` mirror). No `gem_removal_failed` observed, i.e. the RPC path is
+healthy in production.
+
+**Still open after closeout:** `/api/health` is documented in-source as a
+temporary probe and should be removed deliberately; `gem_removal_events` has no
+retention policy; `service_role` holds no EXECUTE on either RPC (correct today,
+but a future cron/admin caller would fail); the 90-day cooldown is a hardcoded
+constant inside `record_gem_removal` and needs a migration to change.
 
 ### 11.6 Module G reconciliation (2026-07-20)
 

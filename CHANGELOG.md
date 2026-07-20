@@ -1,10 +1,12 @@
 # WearWise — Changelog
 
-## Phase 5 — Closet Board v2 + Insights + Quiet Gems (LOCAL COMPLETE — NOT committed, pushed, deployed, or applied to hosted Supabase) (2026-07-18)
+## Phase 5 — Closet Board v2 + Insights + Quiet Gems (DEPLOYED TO PRODUCTION) (2026-07-20)
 
-Local branch `phase-5-closet-board-v2`. Migration `0029_gem_cooldown.sql` is
-applied to the LOCAL stack only; the hosted project remains at `0001–0028`.
-Phase 4's production record is unchanged.
+Merged to `main` as `72cb6fb` (`72cb6fba680aefcede05852ac62eeff6f469399f`) and deployed to Vercel
+production. Migration `0029_gem_cooldown.sql` is **applied to hosted Supabase**;
+the hosted ledger now reads `0001–0029`. Supersedes the local-complete record
+of 2026-07-18. Phase 4's production record (§10) is unchanged and remains the
+prior release.
 
 **Shipped (local).**
 - **Closet Board v2** — `zoneForItem` remains the single placement authority;
@@ -33,7 +35,7 @@ Phase 4's production record is unchanged.
   complete recommendation; `gem_shown` once per meaningful render identity;
   `gem_worn` only after a newly `confirmed` atomic Wore-It.
 
-**Migration 0029 (local only).** Three per-item cooldown columns on
+**Migration 0029 (applied to production 2026-07-20).** Three per-item cooldown columns on
 `wardrobe_items` plus `gem_removal_events` (UNIQUE `(user_id, operation_id)`;
 clients get read-own SELECT and NO insert), `record_gem_removal` (SECURITY
 DEFINER, pinned `search_path`, `auth.uid()` identity, verifies ownership,
@@ -60,6 +62,25 @@ and swap/another-option separation are unchanged.
 gem removal 15/0 · outfit-request privileges 11/0 · engine suite 874/0 ·
 `tsc --noEmit` clean · `next lint` clean · `next build` clean · manual localhost
 acceptance of the laundry invalidation/replacement and Retry paths.
+
+**Released to production (2026-07-20).** Migration `0029` applied to the linked
+hosted project; post-migration security checks passed (ledger includes 0029, the
+three `wardrobe_items` columns and both CHECK constraints present,
+`gem_removal_events` created with `UNIQUE (user_id, operation_id)`, RLS enabled
+with a single owner SELECT policy and no INSERT/UPDATE/DELETE policy,
+`authenticated` holding SELECT only, both functions present with pinned
+`search_path` and the intended security modes, and no `anon`/`PUBLIC` EXECUTE).
+Phase 5 merged to `main` as `72cb6fb`; Vercel production deployment Ready on that
+commit; `/api/health` returned 200. Production smoke passed across Closet Board,
+insights, quick check, Today gem note, laundry-triggered regeneration/constrained
+state, Retry, atomic Wore-It, the two-removal single rest message, and duplicate
+operation-id suppression. Stabilization integrity queries passed. Telemetry
+**confirmed** — the Phase 5 events are arriving.
+
+**Not shipped.** Batch upload resilience (failed-photo retention for retry,
+per-item tagging shimmer) was deliberately deferred — no reproducible upload
+defect was found and the approved scope excluded a batch-upload rewrite. Logged
+in `IDEAS.md` under "Discovered during Phase 5".
 
 ## Phase 4 — Recommendation Consistency Hotfix (IN PROGRESS — not production-verified) (2026-07-15)
 
