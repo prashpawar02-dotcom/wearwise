@@ -72,6 +72,10 @@ export function SwapSheet({
   const [capMsg, setCapMsg] = useState<string | null>(null);
   const [ack, setAck] = useState<string | null>(null);
   const [hasUndo, setHasUndo] = useState(false);
+  // F2/F6: one operation_id per deliberate accept (reused on retry of the same
+  // candidate; new for a different one). Never generated on sheet open / render.
+  const [op, setOp] = useState<{ candidateId: string; id: string } | null>(null);
+  const [restMessage, setRestMessage] = useState<string | null>(null);
 
   // Fresh slot picker each time the sheet opens. NEVER auto-fetches candidates
   // and NEVER triggers another-option — this sheet is single-item swap only.
@@ -84,7 +88,7 @@ export function SwapSheet({
     if (!open) return;
     setView("slots"); setBusy(false); setCap(initialCap); setSelected(null);
     setCandidates([]); setSlotName(null); setMessage(null); setReason(null);
-    setWhy([]); setCapMsg(null); setAck(null); setHasUndo(false);
+    setWhy([]); setCapMsg(null); setAck(null); setHasUndo(false); setOp(null); setRestMessage(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -133,22 +137,28 @@ export function SwapSheet({
   }
 
   async function applySwap(candidateId: string) {
-    if (!selected) return;
+    if (!selected || busy) return; // double-click / double-submit guard
+    const opId = op?.candidateId === candidateId ? op.id : crypto.randomUUID();
+    if (op?.candidateId !== candidateId) setOp({ candidateId, id: opId });
     setBusy(true);
     try {
       const res = await fetch("/api/daily-drop/swap", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendationId, replaceItemId: selected.id, replacementItemId: candidateId }),
+        body: JSON.stringify({ recommendationId, replaceItemId: selected.id, replacementItemId: candidateId, operationId: opId }),
       });
       const data = await res.json().catch(() => ({}));
-      if (data.status === "updated") applyResult(data);
-      else if (data.status === "cap_reached") handleCap(data);
+      if (data.status === "updated") {
+        setOp(null); // definitive success → clear the retained operation
+        if (data.gemRemoval?.showRestMessage) setRestMessage("Not feeling this one? I\u2019ll rest it for a while.");
+        applyResult(data);
+      } else if (data.status === "cap_reached") handleCap(data);
       else if (data.status === "stale") {
         // The outfit changed under us (a piece went to the wash). Refresh + close.
         setMessage(data.message ?? "That outfit just changed — refreshing.");
         onChanged(); onClose();
       } else setMessage("We couldn't swap that piece. Please try again.");
     } catch {
+      // Network failure: keep `op` so a retry of THIS candidate reuses the id.
       setMessage("We couldn't swap that piece. Please try again.");
     } finally { setBusy(false); }
   }
@@ -291,6 +301,12 @@ export function SwapSheet({
                   ))}
                 </ul>
               )}
+            </div>
+          )}
+          {restMessage && (
+            <div className="mt-3 flex items-start gap-2 rounded-ww-md border border-sage/30 bg-sage/[0.08] p-2.5">
+              <Icon.Sparkle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sage" />
+              <p className="text-xs leading-snug text-graphite">{restMessage}</p>
             </div>
           )}
           <div className="mt-4 grid grid-cols-3 gap-2">

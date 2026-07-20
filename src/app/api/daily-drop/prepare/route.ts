@@ -54,7 +54,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const result = await prepareDailyDrop(user.id, { force, supabase: admin, source: "manual" });
+  // ignoreOptIn: this is an explicit, authenticated action by the user on their
+  // OWN dashboard. `daily_drop_enabled` governs push/cron delivery, not whether
+  // the user may prepare an outfit. Without this, Retry returned status
+  // "disabled" and silently changed nothing.
+  const result = await prepareDailyDrop(user.id, { force, supabase: admin, source: "manual", ignoreOptIn: true });
 
   // HTTP contract (locked): a profile/config/query failure is a TECHNICAL error
   // (retryable) — it must NOT be reported as a wardrobe/eligibility failure.

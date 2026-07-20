@@ -4,6 +4,8 @@ import { BottomNav } from "@/components/nav/bottom-nav";
 import { ClosetBoard } from "./closet-board";
 import { countReadyToReturn, DEFAULT_WASH_CYCLE_DAYS, daysSinceDate } from "@/lib/laundry";
 import type { WardrobeItem } from "@/lib/types";
+import { computeWardrobeInsights } from "@/lib/wardrobe/insight-data";
+import type { InsightCard } from "@/lib/wardrobe/insights";
 
 // Always render fresh per-user data (no stale Router Cache after uploads),
 // and so private image URLs are signed per request and never cached.
@@ -26,7 +28,7 @@ export default async function WardrobePage() {
   // badge, and only when we haven't nudged within the last cycle.
   const { data: profileData } = await supabase
     .from("profiles")
-    .select("wash_cycle_days, laundry_return_prompt_at")
+    .select("wash_cycle_days, laundry_return_prompt_at, default_occasion")
     .eq("id", user.id)
     .maybeSingle();
   const washCycleDays =
@@ -36,6 +38,27 @@ export default async function WardrobePage() {
   const daysSincePrompt = daysSinceDate(lastPromptAt);
   const showAutoReturn = autoReturnCount > 0 && (daysSincePrompt == null || daysSincePrompt >= 1);
 
+  // Query-backed insight cards (Phase 5, Module E). Owner-scoped; fails closed —
+  // a failed insight query must never break the board.
+  let insightCards: InsightCard[] = [];
+  let gemItemIds: string[] = [];
+  try {
+    const { data: wornRows } = await supabase
+      .from("worn_history")
+      .select("item_ids")
+      .eq("user_id", user.id);
+    const insights = computeWardrobeInsights({
+      items,
+      wornRows: (wornRows ?? []) as { item_ids: string[] | null }[],
+      defaultOccasion: (profileData as { default_occasion?: string | null } | null)?.default_occasion ?? null,
+      now: new Date(),
+    });
+    insightCards = insights.cards;
+    gemItemIds = insights.gemItemIds;
+  } catch (err) {
+    console.error("wardrobe insights failed", err);
+  }
+
   return (
     <main className="min-h-dvh pb-28">
       <div className="animate-fade-in px-6 pt-10">
@@ -44,6 +67,8 @@ export default async function WardrobePage() {
           urls={urls}
           autoReturnCount={autoReturnCount}
           showAutoReturn={showAutoReturn}
+          insightCards={insightCards}
+          gemItemIds={gemItemIds}
         />
       </div>
       <BottomNav />

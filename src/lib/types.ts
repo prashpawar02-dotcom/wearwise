@@ -126,6 +126,10 @@ export interface WardrobeItem {
   avoid_with: string[] | null;
   tag_confidence: Record<string, number> | null;
   photo_quality_flag: boolean;
+  // Quiet-Gem cooldown (migration 0029; optional/undefined until applied).
+  gem_skip_count?: number | null;
+  gem_cooldown_until?: string | null;
+  gem_rested_notified?: boolean | null;
   created_at: string;
 }
 

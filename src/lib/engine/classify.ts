@@ -223,3 +223,9 @@ export function culturalResolution(i: WardrobeItem): CulturalResolution {
 export function culturalSourceOf(i: WardrobeItem): CulturalSource {
   return culturalResolution(i).source;
 }
+
+/** Completeness gate shared by the recommender and gem validation:
+ *  an outfit is "complete" once it contains a footwear-role item. */
+export function hasFootwear(items: WardrobeItem[]): boolean {
+  return items.some((i) => engineRole(i) === "footwear");
+}

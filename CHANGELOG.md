@@ -1,5 +1,66 @@
 # WearWise — Changelog
 
+## Phase 5 — Closet Board v2 + Insights + Quiet Gems (LOCAL COMPLETE — NOT committed, pushed, deployed, or applied to hosted Supabase) (2026-07-18)
+
+Local branch `phase-5-closet-board-v2`. Migration `0029_gem_cooldown.sql` is
+applied to the LOCAL stack only; the hosted project remains at `0001–0028`.
+Phase 4's production record is unchanged.
+
+**Shipped (local).**
+- **Closet Board v2** — `zoneForItem` remains the single placement authority;
+  new pure `partitionBoardItems` enforces the board contract (archived off-board,
+  every item in exactly one zone, in-wash only via the Laundry surface).
+  Accessible collapsible sections (`CollapsibleSection`, real button +
+  `aria-expanded`/`aria-controls`, ≥44px, reduced-motion), persistent Add,
+  native 200-item rendering (`content-visibility` + `contain-intrinsic-size`,
+  lazy images) with no new dependency. Privacy-safe `board_section_toggled`.
+- **Tag correction + check queue** — three recommendation-critical fields
+  (category, formality, cultural_tag) via the EXISTING owner-RLS mutation path.
+  Success requires a returned owned row proving the value and `tag_confidence`
+  merged with ONLY that field set to `1`; unrelated keys preserved; review flags
+  untouched. `tag_edited` fires once after proven persistence; `tagcheck_completed`
+  only when every presented field is confirmed.
+- **Query-backed insights** — 0–3 honest cards (most-worn, quiet-gem count,
+  laundry snapshot) computed server-side from owner-scoped `worn_history` +
+  `wardrobe_items`; ties and empty signals omit the card; fails closed.
+- **Quiet Gems** — a gem must participate in a COMPLETE, hard-validated outfit
+  under the real engine (`eligiblePool` → `buildCandidates` → `hasFootwear` →
+  `candidateRejection`) across a bounded multi-context set (casual + work +
+  festive + the user's default occasion), so work/formal/ethnic/festive pieces
+  are not excluded. Explicit removals are idempotent via a client-generated
+  `operation_id`; two distinct removals start a 90-day cooldown with one rest
+  message. Today's gem note renders only on the final, availability-validated,
+  complete recommendation; `gem_shown` once per meaningful render identity;
+  `gem_worn` only after a newly `confirmed` atomic Wore-It.
+
+**Migration 0029 (local only).** Three per-item cooldown columns on
+`wardrobe_items` plus `gem_removal_events` (UNIQUE `(user_id, operation_id)`;
+clients get read-own SELECT and NO insert), `record_gem_removal` (SECURITY
+DEFINER, pinned `search_path`, `auth.uid()` identity, verifies ownership,
+complete status, pre-swap contained the gem, post-swap does not, accepted-result
+match, and item availability) and `reset_gem_skip_after_wear` (verified,
+cooldown-preserving, idempotent). Reversible via `supabase/rollbacks/`.
+
+**Defect fixed — Today laundry recovery (protected recommendation-authority path).**
+Marking a picked item `in_wash` left Today on a constrained card and "Try
+preparing again" appeared to do nothing. Root cause: `ensureTodayDrop`'s
+REGENERATE call omitted `ignoreOptIn`, so for a user with
+`daily_drop_enabled = false` `prepareDailyDrop` returned `disabled` WITHOUT
+writing and the stale row was silently kept; Retry additionally sent no `force`,
+so the route returned the same row (`exists`) and re-rendered identically. Fix:
+regeneration and the manual prepare route now bypass the PUSH opt-in (delivery
+preference, not permission to prepare); non-writing outcomes are handled
+explicitly; the constrained state names the unavailable item and the engine's
+real blocker; Retry forces one bounded regeneration and always reports its
+outcome. Availability-as-hard-filter, final pre-render validation,
+recommendation authority (0026), one-write-per-request, atomic Wore-It (0023)
+and swap/another-option separation are unchanged.
+
+**Verified locally.** `supabase db reset` 0001–0029 OK · gem cooldown 15/0 ·
+gem removal 15/0 · outfit-request privileges 11/0 · engine suite 874/0 ·
+`tsc --noEmit` clean · `next lint` clean · `next build` clean · manual localhost
+acceptance of the laundry invalidation/replacement and Retry paths.
+
 ## Phase 4 — Recommendation Consistency Hotfix (IN PROGRESS — not production-verified) (2026-07-15)
 
 Local-only branch `phase-4-recommendation-consistency-hotfix`. NOT committed,

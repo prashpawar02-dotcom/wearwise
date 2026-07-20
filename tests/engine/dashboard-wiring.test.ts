@@ -47,14 +47,14 @@ ok("dashboard is dynamic / not globally cached",
 const fnStart = page.indexOf("async function ensureTodayDrop");
 const fn = fnStart >= 0 ? page.slice(fnStart) : "";
 const createIdx = fn.indexOf("prepareDailyDrop(userId, { supabase, ignoreOptIn: true })");
-const regenIdx = fn.indexOf("prepareDailyDrop(userId, { force: true, supabase })");
+const regenIdx = fn.indexOf("prepareDailyDrop(userId, { force: true, supabase, ignoreOptIn: true })");
 const elseIdx = fn.indexOf('} else {'); // Phase 4: create in if-branch, freshness regen in else-branch
 const finalValIdx = fn.indexOf("const validity = await validateOutfitCurrent(supabase, userId, ids);");
 
 ok("exactly one create call in ensureTodayDrop",
-  (fn.match(/ignoreOptIn: true \}\)/g) ?? []).length === 1);
+  (fn.match(/prepareDailyDrop\(userId, \{ supabase, ignoreOptIn: true \}\)/g) ?? []).length === 1);
 ok("exactly one regenerate call in ensureTodayDrop",
-  (fn.match(/\{ force: true, supabase \}\)/g) ?? []).length === 1);
+  (fn.match(/prepareDailyDrop\(userId, \{ force: true, supabase, ignoreOptIn: true \}\)/g) ?? []).length === 1);
 ok("explicit writeAttempted guard present", fn.includes("let writeAttempted = false"));
 ok("explicit path tracking (existing | created | regenerated)",
   fn.includes('"existing" | "created" | "regenerated"'));

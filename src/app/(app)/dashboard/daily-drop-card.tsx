@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/Icon";
@@ -10,6 +10,7 @@ import { SaveLookButton } from "@/components/wearwise/SaveLookButton";
 import { WearConfirmSheet, type WearConfirmState } from "@/components/wearwise/WearConfirmSheet";
 import { PostWearSheet } from "@/components/wearwise/PostWearSheet";
 import { WhyThisWorks } from "@/components/wearwise/WhyThisWorks";
+import { shouldEmitGemWorn } from "@/lib/wardrobe/today-gem";
 import { SwapSheet, type CapView } from "@/components/wearwise/SwapSheet";
 import { track } from "@/lib/analytics";
 import type { Disposition } from "@/lib/laundry";
@@ -88,6 +89,8 @@ export interface DailyDropView {
   /** Phase 4B: true when the engine's confidence fell below the dual-pick
    *  threshold at generation time — surfaced as one honest, calm line. */
   isDualPick: boolean;
+  /** Phase 5 (F): Today Quiet-Gem note — server-computed AFTER final validation. */
+  gem?: { itemId: string; note: string; renderKey: string } | null;
 }
 
 type RepeatStatus = "no_history" | "repeat_safe" | "one_recent" | "multiple_recent";
@@ -145,6 +148,8 @@ export function DailyDropCard({
 }) {
   const router = useRouter();
   const [worn, setWorn] = useState(drop.status === "worn");
+  const gemShownRef = useRef<string | null>(null);
+  const gemWornFiredRef = useRef(false);
 
   // Wore It step 1: confirmation (Phase 4C). No write happens until the
   // user taps the primary action inside the sheet — see confirmWorn().
@@ -205,6 +210,17 @@ export function DailyDropCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drop.id, drop.status, drop.items.length, drop.weatherSummary, drop.dailyInsight, repeatStatus]);
 
+  // gem_shown (F4): once per meaningful-render identity (rec id + sorted selected
+  // ids + gem id). Rerenders of the same identity do not refire; a real outfit
+  // change (new renderKey) can fire again. No item name/photo in the payload.
+  useEffect(() => {
+    const key = drop.gem?.renderKey;
+    if (key && gemShownRef.current !== key) {
+      gemShownRef.current = key;
+      track("gem_shown", { source: "today" });
+    }
+  }, [drop.gem?.renderKey]);
+
   // "Wear this" — opens the confirmation sheet ONLY. No write happens here;
   // see confirmWorn() for the single atomic RPC call (Phase 4C fixes the old
   // unguarded client-side write that used to live in this handler).
@@ -244,14 +260,20 @@ export function DailyDropCard({
       const res = await fetch("/api/daily-drop/wear", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendationId: drop.id, itemIds: drop.itemIds }),
+        body: JSON.stringify({ recommendationId: drop.id, itemIds: drop.itemIds, gemItemId: drop.gem?.itemId ?? null }),
       });
-      const data: { status?: string; reason?: string } = await res.json().catch(() => ({}));
+      const data: { status?: string; reason?: string; gemWorn?: boolean } = await res.json().catch(() => ({}));
 
       if (data.status === "ok" || data.status === "already") {
         track("wear_confirmed", { item_count: drop.itemIds.length, already: data.status === "already" });
         setWorn(true);
         if (data.status === "ok") fetch("/api/streaks/checkin", { method: "POST" }).catch(() => {});
+        // gem_worn (F9): once, only on a NEWLY confirmed wear of an outfit that
+        // contained the qualifying gem (server-verified via the wear response).
+        if (shouldEmitGemWorn(data.status ?? "", !!data.gemWorn) && !gemWornFiredRef.current) {
+          gemWornFiredRef.current = true;
+          track("gem_worn", { source: "today" });
+        }
         if (data.status === "already") {
           // Duplicate-safe, honest result — required state 6. Let the user
           // see it, then proceed on their own next tap (routed above).
@@ -488,6 +510,14 @@ export function DailyDropCard({
       <div className="mt-3 flex items-start gap-2 rounded-ww-md border border-lavender/40 bg-lavender/[0.10] px-3 py-2.5">
         <Icon.Sparkle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-plum" />
         <p className="text-xs leading-snug text-charcoal">{drop.dailyInsight}</p>
+      </div>
+    )}
+
+    {/* Quiet-Gem note (Phase 5 F3) — SECONDARY; never replaces Why This Works. */}
+    {drop.gem && (
+      <div className="mt-2 flex items-start gap-2 rounded-ww-md border border-rose/30 bg-rose/[0.06] px-3 py-2">
+        <Icon.Sparkle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose" />
+        <p className="text-[11px] leading-snug text-graphite">{drop.gem.note}</p>
       </div>
     )}
 

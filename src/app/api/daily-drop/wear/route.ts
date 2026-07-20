@@ -48,13 +48,14 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ status: "error", reason: "unauthorized" }, { status: 401 });
 
-  let body: { recommendationId?: string; itemIds?: unknown } = {};
+  let body: { recommendationId?: string; itemIds?: unknown; gemItemId?: unknown } = {};
   try {
     body = (await req.json()) as { recommendationId?: string; itemIds?: unknown };
   } catch {
     return NextResponse.json({ status: "error", reason: "bad_request" }, { status: 400 });
   }
   const { recommendationId } = body;
+  const gemItemId = typeof body.gemItemId === "string" ? body.gemItemId : null;
   const itemIds = Array.isArray(body.itemIds)
     ? (body.itemIds as unknown[]).filter((id): id is string => typeof id === "string")
     : [];
@@ -98,9 +99,31 @@ export async function POST(req: Request) {
   }
 
   switch (rpcStatus) {
-    case "confirmed":
+    case "confirmed": {
       await mirror("daily_drop_wear_confirmed", { item_count: itemCount });
-      return NextResponse.json({ status: "ok", wornAt, itemCount });
+      // F7/F9: server-verified gem wear + best-effort skip reset via a dedicated
+      // RPC (never a direct wardrobe_items/daily_recommendations write here, so the
+      // atomic-wear contract stays intact). Its failure NEVER fails the confirmed
+      // wear. is_gem_wear is verified server-side (gem ∈ authoritative outfit).
+      let gemWorn = false;
+      if (gemItemId) {
+        try {
+          const { data: rr, error: rrErr } = await supabase.rpc("reset_gem_skip_after_wear", {
+            p_recommendation_id: recommendationId,
+            p_gem_item_id: gemItemId,
+          });
+          if (rrErr) {
+            await mirror("gem_skip_reset_failed", { reason: "rpc_failed" });
+          } else {
+            const row = (Array.isArray(rr) ? rr[0] : rr) as { reset?: boolean; is_gem_wear?: boolean } | null;
+            gemWorn = !!row?.is_gem_wear;
+          }
+        } catch {
+          await mirror("gem_skip_reset_failed", { reason: "exception" });
+        }
+      }
+      return NextResponse.json({ status: "ok", wornAt, itemCount, gemWorn });
+    }
 
     case "already":
       return NextResponse.json({ status: "already", wornAt, itemCount });

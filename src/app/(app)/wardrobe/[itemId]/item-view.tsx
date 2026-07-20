@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ItemEditor } from "./item-editor";
+import { QuickCorrect } from "./quick-correct";
 import { OCCASIONS, AUTOTAG_PRIVACY_COPY, type AvailabilityStatus, type Occasion, type WardrobeItem } from "@/lib/types";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -174,6 +175,8 @@ export function ItemView({ item: initial, imageUrl }: { item: WardrobeItem; imag
           router.refresh();
         }}
       />
+
+      <QuickCorrect item={item} onChange={setItem} />
 
       <Button onClick={looksGood} size="full" disabled={confirming}>
         <Check className="h-4 w-4" /> {confirming ? "Saving…" : "Looks good"}

@@ -22,10 +22,10 @@ const CARD = "src/app/(app)/dashboard/daily-drop-card.tsx";
 const CONFIRM_SHEET = "src/components/wearwise/WearConfirmSheet.tsx";
 const POSTWEAR_SHEET = "src/components/wearwise/PostWearSheet.tsx";
 
-const route = readFileSync(ROUTE, "utf8");
-const card = readFileSync(CARD, "utf8");
-const confirmSheet = readFileSync(CONFIRM_SHEET, "utf8");
-const postWearSheet = readFileSync(POSTWEAR_SHEET, "utf8");
+const route = readFileSync(ROUTE, "utf8").replace(/\r\n/g, "\n");
+const card = readFileSync(CARD, "utf8").replace(/\r\n/g, "\n");
+const confirmSheet = readFileSync(CONFIRM_SHEET, "utf8").replace(/\r\n/g, "\n");
+const postWearSheet = readFileSync(POSTWEAR_SHEET, "utf8").replace(/\r\n/g, "\n");
 
 // =====================================================================
 // 1. Server route (Phase 4C atomicity hotfix, migration 0023): the route is

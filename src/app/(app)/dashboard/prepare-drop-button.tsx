@@ -33,6 +33,8 @@ type PrepareResponse = {
 const MSG_DISABLED = "Turn on Daily Outfit Drop in You to prepare today's outfit.";
 const MSG_WARDROBE = "Add a few clothes or mark items available to prepare better outfits.";
 const MSG_GENERIC = "We couldn't prepare today's outfit just now. Please try again in a moment.";
+const MSG_STILL_CONSTRAINED = "Still no complete clean outfit from what's available right now.";
+const MSG_UNCHANGED = "Nothing changed — today's outfit is already up to date.";
 const TIP_TIMEZONE = "Tip: save your Daily Drop preferences in You to improve timing.";
 
 // Fail reasons that mean "your wardrobe needs a little more to work with".
@@ -62,7 +64,10 @@ export function PrepareDropButton({ compact = false }: { compact?: boolean }) {
       const res = await fetch("/api/daily-drop/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: "{}", // never send force in normal UI
+        // The constrained-state retry FORCES a fresh bounded regeneration —
+        // otherwise the route returns the same stale row ("exists") and the
+        // card re-renders identically, which reads as "nothing happened".
+        body: JSON.stringify({ force: compact }),
       });
       const data: PrepareResponse = await res.json().catch(() => ({}));
       const status = data.status;
@@ -73,7 +78,21 @@ export function PrepareDropButton({ compact = false }: { compact?: boolean }) {
       // Prepared / already exists, or a failure that WROTE a row (too few items,
       // no wardrobe): let the dashboard re-read and render the card or the
       // honest failed fallback.
-      if (status === "prepared" || status === "exists" || (status === "failed" && data.recommendationId)) {
+      // A new outfit was written → just refresh; the hero renders it.
+      if (status === "prepared") {
+        router.refresh();
+        return;
+      }
+      // A row was written but no complete outfit exists → refresh so the card
+      // shows the honest engine reason, AND say so here (never silent).
+      if (status === "failed" && data.recommendationId) {
+        setMessage(fail && WARDROBE_REASONS.has(fail) ? MSG_WARDROBE : MSG_STILL_CONSTRAINED);
+        router.refresh();
+        return;
+      }
+      // Idempotent no-change result → explain rather than silently re-render.
+      if (status === "exists") {
+        setMessage(MSG_UNCHANGED);
         router.refresh();
         return;
       }

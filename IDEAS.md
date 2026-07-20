@@ -252,3 +252,15 @@ fallback), locked by 16 dashboard-wiring assertions. Not a backlog item.
     it to a real use or removing the field and its form control in a
     later, separate cleanup — not done here to keep this phase's diff
     scoped to onboarding-v2 itself.
+
+## Discovered during Phase 5 (Closet Board v2 + Insights + Quiet Gems)
+
+- **Batch upload resilience.** Preserve failed photos for retry without
+  requiring users to re-select files, and show per-item tagging progress /
+  shimmer. Today a failed row is discarded ("Failed items aren't saved. You
+  can try adding those photos again.") and the user must re-pick the file
+  from their device; per-item state is a text label only. Deliberately NOT
+  built in Phase 5: no reproducible upload defect was found during Phase 5
+  acceptance, and the approved reduced scope excluded a batch-upload
+  rewrite. Schedule only after a reproduced upload failure, or as a
+  dedicated upload phase.
