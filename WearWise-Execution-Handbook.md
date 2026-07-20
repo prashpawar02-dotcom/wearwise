@@ -358,3 +358,121 @@ Mandatory for every table a client or server role touches:
 - Add a real local PostgREST/RLS integration test (not only source-string
   assertions) proving a real signed-in session can do the allowed operations and
   is denied the disallowed/cross-owner ones.
+
+
+## 10. Phase 4 Close + Ground-Truth Refresh (Addendum — 2026-07-17)
+
+*This addendum supersedes stale facts in §2 and §5 where they conflict. The repo and production are ground truth. Verified this session against local repo `main` and migration files.*
+
+### 10.1 Corrected ground truth (replaces §2 staleness)
+- **Migrations no longer end at 0019.** Canonical set `0001`–`0028` is present in `supabase/migrations/` and applied in production. New migrations continue from **0029**.
+- **Git:** `main` HEAD = `42b0907` (`Merge Phase 4: recommendation consistency and privilege contracts (32cf4b2)`, 2026-07-17). Principal impl commit `32cf4b2`. `main` contains `42b0907` — confirmed.
+- **Working tree:** ~200 files show as modified but carry **zero real diffs** (`git diff --ignore-all-space --numstat` is empty) — CRLF line-ending noise only. Do not "fix" by mass-committing.
+- **Untracked, intentionally out-of-Git:** `.claude/`, `.codex/`, `AGENTS.md`, `docs/prod-reconciliation/evidence_stage4_reset.txt`, `evidence_stage5_diff.txt`. Leave uncommitted (local agent config + release evidence).
+
+### 10.2 Phase numbering reconciliation
+The original §5 roadmap (feature Phases 1–8) and the operational release history diverged. Actual shipped history:
+- **P1** Recommendation Engine v2 (`0020`) · **P2** Laundry/Availability (`0021`) · **P3** Swap/Another Option/Why (`0022`) — all shipped.
+- **"Phase 4" (shipped, this handoff)** telescoped four concerns into one release: Today shell v2 + Onboarding v2 (`0025`) **plus** recommendation consistency/authority (`0026`), atomic Wore-It (`0023`), and the privilege-contract hardening (`0024`, `0027`, `0028`).
+- **Still unbuilt** from the original roadmap: Closet Board v2 + Insights/Quiet Gems (old §5), Style Me v2/Plan/You (old §6), Learning Loop/Notifications/Streaks conversion/Weekly Recap (old §7), Pro tier (old §8). These remain valid *feature* backlog but are gated behind beta-readiness (see §10.6).
+
+### 10.3 Migration ledger 0001–0028 (production-aligned)
+History drift was repaired to canonical names before Phase 4: `0001` and `0020` were missing from the hosted ledger; `0021`/`0022` existed under timestamp versions. Public schema was proven equivalent to the committed `0001–0022` baseline; timestamp rows marked reverted; canonical `0001/0020/0021/0022` marked applied without rerunning SQL; only `0023–0028` were newly applied in the real push.
+
+Phase 4 production migrations: `0023_atomic_wear_confirmation` · `0024_app_role_privileges` · `0025_onboarding_v2` · `0026_recommendation_authority` · `0027_streak_privileges` · `0028_outfit_request_privileges`.
+
+### 10.4 Contracts that must not break (Phase 4)
+- **Atomic Wore-It** (`0023`, `confirm_daily_drop_wear`): SECURITY INVOKER, pinned `search_path=public,pg_temp`; ownership + exact item-set match + availability validation + row lock + idempotency in ONE transaction; duplicate returns original, never re-stamps `worn_at`.
+- **Privilege = table GRANT before RLS** (`0024/0027/0028`): every client/server-touched table grants ONLY proven privileges; `anon` holds none on core tables (the old anon TRUNCATE is closed); RLS restricts rows to `auth.uid()` owner. See the §9 engineering rule.
+- **Recommendation authority** (`0026`): `outfit_status ∈ {complete,partial,constrained,NULL}`, `missing_slots`, `partial_reason`, `inventory_fingerprint`. Complete outfits must not churn on unrelated adds; must refresh when a used item goes unavailable; partial→complete when the missing slot is restored.
+- **Onboarding v2** (`0025`): only `onboarding_step` + `default_occasion` persisted; wardrobe-dependent states computed live; onboarding never inserts a `profiles` row (`handle_new_user()` is sole row-creator); onboarded users never re-enter the 6-step flow.
+
+### 10.5 Production state + security backlog (do not patch blindly)
+- **Deployment:** `dpl_5Eur1tkJ1b6rf7Tiq2rRomF37SSV`, state `READY`, commit `42b0907`. Final manual live smoke test passed — Phase 4 closed, not merely deployed.
+- **Security audit backlog** (advisor warnings — inspect call sites/grants/triggers before any change; use a NEW migration, never edit an applied one):
+  1. `SECURITY DEFINER` funcs possibly EXECUTE-able by `anon`/`authenticated`: `enforce_looks_cap`, `enforce_wardrobe_cap`, `handle_new_user`, `is_admin`, `is_pro`, `rls_auto_enable`, `start_trial_on_profile` (trigger funcs often need no client EXECUTE — verify usage first).
+  2. `billing_events`, `generation_cache`: RLS enabled, no policies (may be intentional service-only).
+  3. Leaked-password protection reported disabled.
+
+### 10.6 Next phase — Phase 5 = Private-Beta Instrumentation & Reliability
+**Primary outcome:** the core funnel is *measurable* and errors are *visible* before any feature expansion. **Evidence:** `src/lib/analytics.ts` `track()` is a well-built fail-safe wrapper but has **one** call site in all of `src/`; the §3.9 event contract (`drop_opened`, `wore_it_tapped`, `swap_requested`, `swap_kept`, `another_option`, `feedback_negative`, `laundry_marked`, `onboarding_step_completed`, `cap_hit_*`, …) is essentially unfired. No `@sentry` wiring exists despite Sentry being in the stack. You cannot currently measure onboarding completion, Wore-It rate, swap usage, or partial-recommendation causes.
+**In scope:** wire the §3.9 events at existing surfaces (onboarding steps, drop open, Wore-It, swap/option, feedback, laundry, cap-hits); add server-side capture for server-only events; add Sentry (client+server) with privacy-safe scrubbing; one PostHog funnel dashboard + `partial_reason` breakdown.
+**Explicit non-scope:** no new user features (no Closet Board v2, Style Me v2, Plan, You, Learning Loop, Pro/paywall); no new DB tables unless an event genuinely needs one; no notification changes; no pricing work.
+
+### 10.7 Release log
+| Date | Commit | What |
+|---|---|---|
+| 2026-07-17 | `42b0907` | **Phase 4 close** — Today v2 + Onboarding v2 + recommendation consistency/authority + atomic Wore-It + privilege hardening. Migrations 0023–0028. Deploy `dpl_5Eur…` READY, smoke passed. |
+| 2026-07-10 | `57e4f8b` | Phase 3 swap/another-option/why-this-works (0022). |
+| 2026-07-09 | `33ce187` | Phase 2 laundry/availability (0021). |
+| 2026-07-06 | `6eb1973` | Phase 1 recommendation engine v2 (0020). |
+
+
+## 11. Phase 5 Local Completion Status (Addendum — 2026-07-18)
+
+*Records LOCAL status only. Section 10 (Phase 4 production record) is unchanged
+and remains the last production-verified release.*
+
+### 11.1 Status — local complete, NOT released
+- Branch `phase-5-closet-board-v2`; **nothing committed, pushed, deployed, or
+  merged.**
+- Migration `0029_gem_cooldown.sql` is applied to the **LOCAL** Supabase stack
+  only. **Hosted production remains at `0001–0028`.** 0029 is NOT
+  production-applied and Phase 5 is NOT production-deployed.
+- Exactly one new forward migration (`0029`); its rollback lives only in
+  `supabase/rollbacks/0029_gem_cooldown_down.sql` (non-executed).
+
+### 11.2 Scope delivered (see CHANGELOG for detail)
+Closet Board v2 (deterministic single placement, collapsible sections,
+persistent Add, native 200-item rendering), tag correction + check queue on the
+existing owner-RLS mutation path, query-backed insight cards, and Quiet Gems
+(engine-validated participation across a bounded multi-context set, idempotent
+explicit removal with a 90-day cooldown, Today note gated on the final valid
+recommendation).
+
+### 11.3 Verified acceptance (local)
+`supabase db reset` 0001–0029 OK · gem cooldown local 15/0 · gem removal local
+15/0 · outfit-request privileges 11/0 · engine suite 874/0 · TypeScript clean ·
+full lint clean · production build clean · manual localhost acceptance of the
+laundry invalidation/replacement and Retry recovery paths.
+
+### 11.4 Today laundry recovery defect (protected path — recorded)
+Marking a picked item `in_wash` left Today on a constrained card and Retry
+appeared to do nothing. Cause: the dashboard's REGENERATE call omitted
+`ignoreOptIn`, so `prepareDailyDrop` returned `disabled` **without writing** for
+users with `daily_drop_enabled = false`, and the stale row was silently kept;
+Retry sent no `force`, so the route returned the same row. Fixed: regeneration
+and the manual prepare route bypass the PUSH opt-in (a delivery preference, not
+permission to prepare), non-writing outcomes are handled explicitly, the
+constrained state names the unavailable item plus the engine's real blocker, and
+Retry forces one bounded regeneration and always reports its outcome.
+
+**Contracts explicitly preserved:** availability as a hard filter · final
+availability validation immediately before render · recommendation authority
+(0026) · one write-producing recommendation action per dashboard request ·
+atomic Wore-It (0023, untouched) · swap / Another Option separation ·
+partial/constrained honesty · existing RLS and table privileges.
+
+### 11.5 Remaining before release
+Chairman-gated: commit → push → hosted `0029` apply → deploy → production smoke.
+
+### 11.6 Module G reconciliation (2026-07-20)
+
+An early working tracker listed Phase 5 as Modules A-G, where G read
+"batch upload hardening + telemetry + gem drop note". That tracker predates
+the Chairman's scope correction and does not override it. Reconciled:
+
+- **Gem drop note + Phase 5 event wiring: COMPLETE**, delivered inside
+  Module F/G. Client `gem_shown` / `gem_worn` (dashboard card, render-key
+  deduped) and server `gem_removed` / `gem_rested` / `gem_removal_failed`
+  (`logAppEvent` in the swap route), alongside `board_section_toggled`,
+  `insight_card_tapped`, `tag_edited`, `tagcheck_completed`.
+- **Batch-upload retry / shimmer: DEFERRED, not missing.** No reproducible
+  upload defect was found during Phase 5 acceptance, and the approved
+  reduced scope explicitly excluded a batch-upload rewrite. Logged in
+  `IDEAS.md` under "Discovered during Phase 5". No application code,
+  test, migration or dependency was changed for this decision.
+- **Live PostHog delivery confirmation is a production smoke step, not an
+  implementation gap.** The events are wired and source-verified locally;
+  only end-to-end delivery to the hosted project remains, and that cannot
+  be observed before deploy.

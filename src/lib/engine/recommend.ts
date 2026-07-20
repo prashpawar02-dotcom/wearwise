@@ -22,7 +22,7 @@ import type {
 import { eligiblePool, candidateRejection } from "@/lib/engine/filters";
 import { buildCandidates } from "@/lib/engine/templates";
 import { scoreOutfit } from "@/lib/engine/scoring";
-import { engineRole } from "@/lib/engine/classify";
+import { engineRole, hasFootwear } from "@/lib/engine/classify";
 import { footwearPartialReason } from "@/lib/engine/footwear";
 import { constrainedInventoryNote } from "@/lib/laundry";
 
@@ -30,7 +30,6 @@ const CORE_ROLES = new Set(["upper", "ethnic_upper", "bottom", "one_piece", "sar
 const PARTIAL_CONFIDENCE_CAP = 0.45;
 
 function clamp01(n: number): number { return Math.max(0, Math.min(1, n)); }
-function hasFootwear(items: WardrobeItem[]): boolean { return items.some((i) => engineRole(i) === "footwear"); }
 
 function coreIds(o: ScoredOutfit): Set<string> {
   return new Set(o.items.filter((i) => CORE_ROLES.has(engineRole(i))).map((i) => i.id));

@@ -14,6 +14,8 @@ import { computeInventoryFingerprint } from "@/lib/recommendation/fingerprint";
 import { swapSlot, slotLabel } from "@/lib/engine/swap";
 import { logAppEvent } from "@/lib/events";
 import { DailyDropCard, type DailyDropView } from "./daily-drop-card";
+import { qualifyingTodayGem, todayGemNote, gemShownKey } from "@/lib/wardrobe/today-gem";
+import { constrainedCopy, isThinWardrobe, type BlockedReason } from "@/lib/recommendation/constrained-copy";
 import { PrepareDropButton } from "./prepare-drop-button";
 import { StreakFlame } from "@/components/wearwise/StreakFlame";
 import { ViewBeacon } from "@/components/wearwise/ViewBeacon";
@@ -188,12 +190,20 @@ function constrainedResult(
   reason: string | undefined,
   itemCount: number,
   message?: string,
+  blocked?: { names: string[]; reason: BlockedReason | null },
 ): { failed: string; needsWardrobe?: boolean } {
-  const thin = reason === "no_wardrobe" || reason === "too_few_wearable_items" || itemCount < 10;
-  if (thin) {
+  if (isThinWardrobe(reason, itemCount)) {
     return { failed: "Add a few clothes and your daily outfit will appear here.", needsWardrobe: true };
   }
-  return { failed: message || "We couldn't prepare today's outfit from your available wardrobe." };
+  // Honest: WHAT became unusable + WHY no replacement exists (engine reason).
+  return {
+    failed: constrainedCopy({
+      failReason: reason,
+      message,
+      blockedNames: blocked?.names,
+      blockedReason: blocked?.reason ?? null,
+    }),
+  };
 }
 
 /**
@@ -219,7 +229,7 @@ async function ensureTodayDrop(
     // Minimal columns for the canonical inventory fingerprint (locked decision 5).
     supabase
       .from("wardrobe_items")
-      .select("id, availability_status, category, sub_category, cultural_tag, formality, ai_tag_status, occasion_tags")
+      .select("id, availability_status, category, sub_category, cultural_tag, formality, ai_tag_status, occasion_tags, user_facing_name")
       .eq("user_id", userId),
   ]);
   const currentFingerprint = computeInventoryFingerprint((invRows ?? []) as WardrobeItem[]);
@@ -233,6 +243,7 @@ async function ensureTodayDrop(
   // it lost the create/validate race and is stale, the request FAILS CLOSED
   // rather than writing a second time.
   // ---------------------------------------------------------------------------
+  let blockedFromStale: { names: string[]; reason: BlockedReason | null } | undefined;
   let rec = (data as DailyRecommendation | null) ?? null;
   let source: "existing" | "created" | "regenerated" = rec ? "existing" : "created";
   let writeAttempted = false;
@@ -259,6 +270,16 @@ async function ensureTodayDrop(
     if (rec.status !== "failed" && existingIds.length > 0) {
       const v = await validateOutfitCurrent(supabase, userId, existingIds);
       selectedInvalid = !v.valid;
+      if (!v.valid && v.invalid.length > 0) {
+        // Owner-private garment names, used ONLY for on-screen copy (never analytics).
+        const nameById = new Map(
+          ((invRows ?? []) as WardrobeItem[]).map((r) => [r.id, r.user_facing_name ?? r.category ?? "piece"]),
+        );
+        blockedFromStale = {
+          names: v.invalid.map((iv) => String(nameById.get(iv.itemId) ?? "piece")),
+          reason: v.invalid[0].reason as BlockedReason,
+        };
+      }
     }
     const authorityUnknown = rec.outfit_status == null;
     const nonComplete =
@@ -271,14 +292,21 @@ async function ensureTodayDrop(
         surface: "daily_drop",
         reason: selectedInvalid ? "selected_invalid" : staleByFingerprint ? "inventory_changed" : "authority_unknown",
       });
-      const regenerated = await prepareDailyDrop(userId, { force: true, supabase });
-      if (regenerated.recommendation) { rec = regenerated.recommendation; source = "regenerated"; }
+      // ignoreOptIn: the Today hero must regenerate regardless of the PUSH
+      // notification opt-in (the create path already bypasses it). Without this
+      // a user with daily_drop_enabled=false got status:"disabled" + NO write,
+      // silently leaving the stale outfit on screen.
+      const regenerated = await prepareDailyDrop(userId, { force: true, supabase, ignoreOptIn: true });
       await logAppEvent("stale_outfit_regenerated", userId, { status: regenerated.status });
+      // Honest handling of non-writing outcomes (never silently keep the stale row).
+      if (regenerated.status === "error") return { technical: true };
+      if (regenerated.status === "setup_required") return { setupRequired: true };
+      if (regenerated.recommendation) { rec = regenerated.recommendation; source = "regenerated"; }
     }
   }
 
   if (rec.status === "failed") {
-    return constrainedResult(rec.fail_reason ?? undefined, itemCount, rec.reasoning ?? undefined);
+    return constrainedResult(rec.fail_reason ?? undefined, itemCount, rec.reasoning ?? undefined, blockedFromStale);
   }
 
   // FINAL availability validation — ALWAYS runs on the selected IDs for existing,
@@ -293,7 +321,7 @@ async function ensureTodayDrop(
         surface: `daily_drop_${source}`, reason: validity.invalid[0]?.reason ?? "stale",
       });
     }
-    return constrainedResult(rec.fail_reason ?? undefined, itemCount, rec.reasoning ?? undefined);
+    return constrainedResult(rec.fail_reason ?? undefined, itemCount, rec.reasoning ?? undefined, blockedFromStale);
   }
 
   const members: WardrobeItem[] = validity.items;
@@ -356,6 +384,20 @@ async function ensureTodayDrop(
   );
   const partialReason = rec.partial_reason ?? null;
 
+  // Today Quiet-Gem (F2/F4): ONLY on a COMPLETE authoritative outfit that passed
+  // the final validation above; participation is proven by membership in this
+  // validated outfit. Cooling / unavailable / review-blocked gems are excluded
+  // by qualifyingTodayGem. Never reuses the Wardrobe page's gem result.
+  const gemCooldownUntil: Record<string, string | null> = {};
+  for (const m of members) if (m.gem_cooldown_until) gemCooldownUntil[m.id] = m.gem_cooldown_until;
+  const todayGem =
+    rec.outfit_status === "complete" && missingSlots.length === 0
+      ? qualifyingTodayGem({ outfitItemIds: ids, outfitComplete: true, items: members, now: new Date(), cooldownUntil: gemCooldownUntil })
+      : null;
+  const gem = todayGem
+    ? { itemId: todayGem.id, note: todayGemNote(todayGem, new Date()), renderKey: gemShownKey(rec.id, ids, todayGem.id) }
+    : null;
+
   const view: DailyDropView = {
     id: rec.id,
     status: rec.status,
@@ -372,6 +414,7 @@ async function ensureTodayDrop(
     partialReason,
     confidence: rec.confidence ?? null,
     isDualPick: rec.is_dual_pick ?? false,
+    gem,
   };
   return { view };
 }

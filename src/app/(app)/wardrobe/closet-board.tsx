@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { GarmentTile } from "@/components/wearwise/GarmentTile";
+import { CollapsibleSection } from "@/components/wearwise/CollapsibleSection";
+import { InsightCards } from "@/components/wearwise/InsightCards";
+import type { InsightCard } from "@/lib/wardrobe/insights";
 import { OCCASIONS, type AvailabilityStatus, type Occasion, type WardrobeItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { daysInWash } from "@/lib/laundry";
@@ -23,7 +26,7 @@ import {
   type Zone,
 } from "@/lib/wardrobe";
 
-type FilterKey = "all" | "available" | "laundry" | Zone;
+type FilterKey = "all" | "available" | "laundry" | "gems" | Zone;
 
 const occasionLabel = (v: string) => OCCASIONS.find((o) => o.value === v)?.label ?? v;
 const itemName = (it: WardrobeItem) => it.user_facing_name ?? it.category ?? "Untagged item";
@@ -62,6 +65,8 @@ export function ClosetBoard({
   urls,
   autoReturnCount = 0,
   showAutoReturn = false,
+  insightCards = [],
+  gemItemIds = [],
 }: {
   items: WardrobeItem[];
   urls: Record<string, string>;
@@ -69,28 +74,35 @@ export function ClosetBoard({
   autoReturnCount?: number;
   /** Whether to show the quiet auto-return badge this visit (throttled server-side). */
   showAutoReturn?: boolean;
+  /** Server-computed, query-backed insight cards (Phase 5, Module E). */
+  insightCards?: InsightCard[];
+  /** Engine-validated gem item ids for the "show gems" action. */
+  gemItemIds?: string[];
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  const wearable = useMemo(() => items.filter((i) => statusOf(i) === "available"), [items]);
-  const inWash = useMemo(() => items.filter((i) => statusOf(i) === "in_wash"), [items]);
-  const notAvailable = useMemo(() => items.filter((i) => statusOf(i) !== "available"), [items]);
+  // Archived items are off-board (Phase 5, Module C1 — mirrors partitionBoardItems).
+  const boardItems = useMemo(() => items.filter((i) => statusOf(i) !== "archived"), [items]);
+
+  const wearable = useMemo(() => boardItems.filter((i) => statusOf(i) === "available"), [boardItems]);
+  const inWash = useMemo(() => boardItems.filter((i) => statusOf(i) === "in_wash"), [boardItems]);
+  const notAvailable = useMemo(() => boardItems.filter((i) => statusOf(i) !== "available"), [boardItems]);
   const unavailableCount = notAvailable.length - inWash.length;
-  const needsReview = useMemo(() => items.filter((i) => i.ai_tag_status === "needs_review"), [items]);
+  const needsReview = useMemo(() => boardItems.filter((i) => i.ai_tag_status === "needs_review"), [boardItems]);
 
   // Fire once per board view. Counts only — no item names/images.
   useEffect(() => {
     track("closet_board_viewed", {
-      total_items: items.length,
+      total_items: boardItems.length,
       available_items: wearable.length,
       in_wash_items: inWash.length,
       needs_review_items: needsReview.length,
     });
     // Depend on the counts so navigating back with changed data re-reports.
-  }, [items.length, wearable.length, inWash.length, needsReview.length]);
+  }, [boardItems.length, wearable.length, inWash.length, needsReview.length]);
 
   // Per-zone buckets (available items feed the board; all items feed filters/counts).
   const zones = useMemo(() => {
@@ -98,7 +110,7 @@ export function ClosetBoard({
     const m: Record<Zone, ZoneBuckets> = {
       hanging: empty(), folded: empty(), occasion: empty(), shoes: empty(), accessories: empty(),
     };
-    for (const it of items) {
+    for (const it of boardItems) {
       const z = zoneForItem(it);
       const s = statusOf(it);
       m[z].all.push(it);
@@ -107,7 +119,7 @@ export function ClosetBoard({
       else m[z].unavailable += 1;
     }
     return m;
-  }, [items]);
+  }, [boardItems]);
 
   const zonesRepresented = ZONE_ORDER.filter((z) => zones[z].available.length > 0).length;
 
@@ -131,9 +143,10 @@ export function ClosetBoard({
 
   const filtered = useMemo(() => {
     let list: WardrobeItem[];
-    if (filter === "all") list = items;
+    if (filter === "all") list = boardItems;
     else if (filter === "available") list = wearable;
     else if (filter === "laundry") list = notAvailable;
+    else if (filter === "gems") list = boardItems.filter((i) => gemItemIds.includes(i.id));
     else list = zones[filter].all;
 
     const q = query.trim().toLowerCase();
@@ -147,7 +160,7 @@ export function ClosetBoard({
       );
     }
     return list;
-  }, [filter, query, items, wearable, notAvailable, zones]);
+  }, [filter, query, boardItems, wearable, notAvailable, zones, gemItemIds]);
 
   async function toggleItemWash(item: WardrobeItem) {
     const from = statusOf(item);
@@ -158,10 +171,10 @@ export function ClosetBoard({
     router.refresh();
   }
 
-  if (items.length === 0) return <EmptyState />;
+  if (boardItems.length === 0) return <EmptyState />;
 
   const filters: { key: FilterKey; label: string; count: number }[] = [
-    { key: "all", label: "All", count: items.length },
+    { key: "all", label: "All", count: boardItems.length },
     { key: "available", label: "Available", count: wearable.length },
     { key: "laundry", label: "Laundry", count: notAvailable.length },
     { key: "hanging", label: "Hanging", count: zones.hanging.all.length },
@@ -170,6 +183,7 @@ export function ClosetBoard({
     { key: "shoes", label: "Shoes", count: zones.shoes.all.length },
     { key: "accessories", label: "Accessories", count: zones.accessories.all.length },
   ];
+  if (gemItemIds.length > 0) filters.push({ key: "gems", label: "Gems", count: gemItemIds.length });
 
   return (
     <div className="space-y-5 pb-8">
@@ -179,6 +193,12 @@ export function ClosetBoard({
         onToggleSearch={() => setSearchOpen((v) => !v)}
         query={query}
         onQuery={setQuery}
+      />
+
+      <InsightCards
+        cards={insightCards}
+        onShowGems={() => setFilter("gems")}
+        onShowLaundry={() => setFilter("laundry")}
       />
 
       {/* Closet health */}
@@ -198,17 +218,22 @@ export function ClosetBoard({
         </div>
       </section>
 
-      {/* Closet Board hero */}
-      <section className="overflow-hidden rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm">
-        <RailZone buckets={zones.hanging} urls={urls} />
-        <ZoneDivider />
-        <ShelfZone buckets={zones.folded} urls={urls} />
-        <ZoneDivider />
-        <OccasionZone buckets={zones.occasion} urls={urls} />
-        <ZoneDivider />
-        <ShoeZone buckets={zones.shoes} urls={urls} />
-        <ZoneDivider />
-        <TrayZone buckets={zones.accessories} urls={urls} />
+      {/* Closet Board hero — collapsible sections (Phase 5, Module C2) */}
+      <section className="space-y-4 rounded-ww-lg border border-hairline bg-bone p-4 shadow-ww-sm">
+        {ZONE_ORDER.map((z) => {
+          const Body = ZONE_BODY[z];
+          return (
+            <CollapsibleSection
+              key={z}
+              sectionKey={z}
+              title={ZONE_META[z].title}
+              subtitle={ZONE_META[z].subtitle}
+              meta={zoneMetaText(zones[z])}
+            >
+              <Body buckets={zones[z]} urls={urls} hideHeader />
+            </CollapsibleSection>
+          );
+        })}
       </section>
 
       {/* Laundry basket — the dedicated section at the bottom of the board */}
@@ -243,6 +268,16 @@ export function ClosetBoard({
           ))}
         </div>
       )}
+
+      {/* Persistent Add (Phase 5, Module C3) — reachable while browsing; sits
+          above the bottom tab bar, never covering cards or Laundry actions. */}
+      <Link
+        href="/wardrobe/upload"
+        aria-label="Add clothing"
+        className="fixed bottom-24 right-5 z-30 grid h-14 w-14 place-items-center rounded-full bg-charcoal text-bone shadow-ww-md transition-colors hover:bg-plum focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Icon.Plus className="h-5 w-5" />
+      </Link>
     </div>
   );
 }
@@ -488,9 +523,20 @@ function LaundrySection({
 
 // ===================== Board zones =====================
 
-function ZoneDivider() {
-  return <div className="my-5 h-px bg-mist/40" aria-hidden="true" />;
+function zoneMetaText(b: ZoneBuckets): string {
+  return [
+    `${b.available.length} available`,
+    b.inWash > 0 ? `${b.inWash} in wash` : null,
+    b.unavailable > 0 ? `${b.unavailable} unavailable` : null,
+  ]
+    .filter(Boolean)
+    .join(" \u00b7 ");
 }
+
+const ZONE_BODY: Record<
+  Zone,
+  (p: { buckets: ZoneBuckets; urls: Record<string, string>; hideHeader?: boolean }) => React.ReactElement
+> = { hanging: RailZone, folded: ShelfZone, occasion: OccasionZone, shoes: ShoeZone, accessories: TrayZone };
 
 function ZoneHeader({
   zone,
@@ -564,11 +610,11 @@ function MiniTile({
   );
 }
 
-function RailZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+function RailZone({ buckets, urls, hideHeader }: { buckets: ZoneBuckets; urls: Record<string, string>; hideHeader?: boolean }) {
   const shown = buckets.available.slice(0, 5);
   return (
     <div>
-      <ZoneHeader zone="hanging" buckets={buckets} />
+      {!hideHeader && <ZoneHeader zone="hanging" buckets={buckets} />}
       {shown.length === 0 ? (
         <ZonePlaceholder buckets={buckets} emptyText="No hanging pieces yet." />
       ) : (
@@ -589,11 +635,11 @@ function RailZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string
   );
 }
 
-function ShelfZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+function ShelfZone({ buckets, urls, hideHeader }: { buckets: ZoneBuckets; urls: Record<string, string>; hideHeader?: boolean }) {
   const shown = buckets.available.slice(0, 5);
   return (
     <div>
-      <ZoneHeader zone="folded" buckets={buckets} />
+      {!hideHeader && <ZoneHeader zone="folded" buckets={buckets} />}
       {shown.length === 0 ? (
         <ZonePlaceholder buckets={buckets} emptyText="Nothing folded yet." />
       ) : (
@@ -611,11 +657,11 @@ function ShelfZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<strin
   );
 }
 
-function OccasionZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+function OccasionZone({ buckets, urls, hideHeader }: { buckets: ZoneBuckets; urls: Record<string, string>; hideHeader?: boolean }) {
   const shown = buckets.available.slice(0, 6);
   return (
     <div>
-      <ZoneHeader zone="occasion" buckets={buckets} />
+      {!hideHeader && <ZoneHeader zone="occasion" buckets={buckets} />}
       {shown.length === 0 ? (
         <ZonePlaceholder buckets={buckets} emptyText="No festive, ethnic or formal pieces yet." />
       ) : (
@@ -634,11 +680,11 @@ function OccasionZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<st
   );
 }
 
-function ShoeZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+function ShoeZone({ buckets, urls, hideHeader }: { buckets: ZoneBuckets; urls: Record<string, string>; hideHeader?: boolean }) {
   const shown = buckets.available.slice(0, 4);
   return (
     <div>
-      <ZoneHeader zone="shoes" buckets={buckets} />
+      {!hideHeader && <ZoneHeader zone="shoes" buckets={buckets} />}
       {shown.length === 0 ? (
         <ZonePlaceholder buckets={buckets} emptyText="No shoes yet. Add shoes to complete more outfits." />
       ) : (
@@ -654,12 +700,13 @@ function ShoeZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string
   );
 }
 
-function TrayZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string, string> }) {
+function TrayZone({ buckets, urls, hideHeader }: { buckets: ZoneBuckets; urls: Record<string, string>; hideHeader?: boolean }) {
   const shown = buckets.available.slice(0, 6);
   const trulyEmpty = buckets.all.length === 0;
   return (
     <div>
-      <ZoneHeader
+      {!hideHeader && (
+        <ZoneHeader
         zone="accessories"
         buckets={buckets}
         action={
@@ -668,6 +715,7 @@ function TrayZone({ buckets, urls }: { buckets: ZoneBuckets; urls: Record<string
           </Link>
         }
       />
+      )}
       {shown.length === 0 ? (
         trulyEmpty ? (
           <div className="rounded-ww-md border border-dashed border-hairline-strong bg-stone/20 p-3">
@@ -722,7 +770,10 @@ function ItemCard({ item, url, onToggle }: { item: WardrobeItem; url?: string; o
   }
 
   return (
-    <div className={cn("overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-sm", status !== "available" && "opacity-95")}>
+    <div
+      className={cn("overflow-hidden rounded-ww-md border border-hairline bg-bone shadow-ww-sm", status !== "available" && "opacity-95")}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "0 280px" }}
+    >
       <Link href={`/wardrobe/${item.id}`} className="group block">
         {/* Item tile — the garment sits centred on a warm surface (not a cropped catalog card). */}
         <div className="relative aspect-square bg-stone/60 p-2">
@@ -731,6 +782,8 @@ function ItemCard({ item, url, onToggle }: { item: WardrobeItem; url?: string; o
             <img
               src={url}
               alt={itemName(item)}
+              loading="lazy"
+              decoding="async"
               className={cn("h-full w-full rounded-ww-xs object-contain transition-transform group-active:scale-[0.98]", status === "in_wash" && "opacity-70")}
             />
           ) : (

@@ -9,7 +9,9 @@
     "incremental": false,
     "declaration": false,
     "sourceMap": false,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/lib/types.ts",
@@ -18,6 +20,13 @@
     "src/lib/laundry.ts",
     "src/lib/swap-caps.ts",
     "src/lib/wardrobe.ts",
+    "src/lib/wardrobe/insights.ts",
+    "src/lib/wardrobe/gem-validation.ts",
+    "src/lib/wardrobe/gem-cooldown.ts",
+    "src/lib/wardrobe/board.ts",
+    "src/lib/wardrobe/tag-correction.ts",
+    "src/lib/wardrobe/insight-data.ts",
+    "src/lib/wardrobe/today-gem.ts",
     "src/lib/onboarding.ts",
     "src/lib/engine/types.ts",
     "src/lib/engine/config.ts",
@@ -30,6 +39,7 @@
     "src/lib/engine/footwear.ts",
     "src/lib/engine/occasion.ts",
     "src/lib/recommendation/fingerprint.ts",
+    "src/lib/recommendation/constrained-copy.ts",
     "src/lib/recommendation/profile-guard.ts",
     "src/lib/time/timezone.ts",
     "src/lib/streaks-core.ts",
@@ -54,6 +64,16 @@
     "tests/engine/profile-timezone.test.ts",
     "tests/engine/streaks-core.test.ts",
     "tests/engine/streak-privileges.test.ts",
-    "tests/engine/outfit-request-privileges.test.ts"
+    "tests/engine/outfit-request-privileges.test.ts",
+    "tests/engine/wardrobe-insights.test.ts",
+    "tests/engine/gem-validation.test.ts",
+    "tests/engine/gem-cooldown.test.ts",
+    "tests/engine/wardrobe-board.test.ts",
+    "tests/engine/tag-correction.test.ts",
+    "tests/engine/wardrobe-insight-cards.test.ts",
+    "tests/engine/today-gem.test.ts",
+    "tests/engine/gem-removal-migration.test.ts",
+    "tests/engine/gem-today-wiring.test.ts",
+    "tests/engine/today-recovery.test.ts"
   ]
 }
